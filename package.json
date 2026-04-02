@@ -1,0 +1,33 @@
+{
+  "name": "openaide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenAIDE — AI Native IDE based on VSCodium",
+  "scripts": {
+    "dev:core": "pnpm --filter @openaide/core dev",
+    "dev:extension": "pnpm --filter @openaide/extension dev",
+    "build": "turbo run build",
+    "build:protocol": "pnpm --filter @openaide/protocol build",
+    "build:core": "pnpm --filter @openaide/core build",
+    "build:extension": "pnpm --filter @openaide/extension build",
+    "build:ide": "pnpm --filter @openaide/ide build",
+    "docs:dev": "pnpm --filter @openaide/docs dev",
+    "docs:build": "pnpm --filter @openaide/docs build",
+    "docs:preview": "pnpm --filter @openaide/docs preview",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json}\""
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "prettier": "^3.4.0",
+    "eslint": "^9.16.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

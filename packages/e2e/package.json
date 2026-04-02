@@ -1,0 +1,15 @@
+{
+    "name": "@openaide/e2e",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "test": "playwright test",
+        "test:headed": "playwright test --headed",
+        "test:debug": "playwright test --debug",
+        "test:report": "playwright show-report"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.49.0",
+        "@vscode/test-electron": "^2.4.0"
+    }
+}

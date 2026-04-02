@@ -1,0 +1,39 @@
+diff --git a/cli/src/tunnels/code_server.rs b/cli/src/tunnels/code_server.rs
+index b564330..d24d3c4 100644
+--- a/cli/src/tunnels/code_server.rs
++++ b/cli/src/tunnels/code_server.rs
+@@ -23,7 +23,7 @@ use crate::util::http::{self, BoxedHttp};
+ use crate::util::io::SilentCopyProgress;
+ use crate::util::machine::process_exists;
+ use crate::util::prereqs::skip_requirements_check;
+-use crate::{debug, info, log, spanf, trace, warning};
++use crate::log;
+ use lazy_static::lazy_static;
+ use opentelemetry::KeyValue;
+ use regex::Regex;
+diff --git a/cli/src/tunnels/dev_tunnels.rs b/cli/src/tunnels/dev_tunnels.rs
+index 0168ee6..87dfa27 100644
+--- a/cli/src/tunnels/dev_tunnels.rs
++++ b/cli/src/tunnels/dev_tunnels.rs
+@@ -11,7 +11,7 @@ use crate::util::errors::{
+ 	WrappedError,
+ };
+ use crate::util::input::prompt_placeholder;
+-use crate::{debug, info, log, spanf, trace, warning};
++use crate::log;
+ use async_trait::async_trait;
+ use futures::future::BoxFuture;
+ use futures::{FutureExt, TryFutureExt};
+diff --git a/cli/src/update_service.rs b/cli/src/update_service.rs
+index a39bbf7..764fdb9 100644
+--- a/cli/src/update_service.rs
++++ b/cli/src/update_service.rs
+@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
+ 
+ use crate::{
+ 	constants::{VSCODE_CLI_APP_NAME, VSCODE_CLI_DOWNLOAD_ENDPOINT, VSCODE_CLI_UPDATE_ENDPOINT},
+-	debug, log, options, spanf,
++	log, options,
+ 	util::{
+ 		errors::{wrap, AnyError, CodeError, WrappedError},
+ 		http::{BoxedHttp, SimpleResponse},

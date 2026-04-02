@@ -1,0 +1,53 @@
+{
+  "nameShort": "OpenAIDE",
+  "nameLong": "OpenAIDE",
+  "applicationName": "openaide",
+  "dataFolderName": ".openaide-ide",
+  "win32MutexName": "openaideide",
+  "licenseName": "MIT",
+  "licenseUrl": "https://github.com/user/openaide/blob/main/LICENSE",
+  "win32DirName": "OpenAIDE IDE",
+  "win32NameVersion": "OpenAIDE IDE",
+  "win32AppId": "{{D1A2N3S4-H5I6-7890-ABCD-EF1234567890}",
+  "win32AppUserModelId": "OpenAIDEIDE",
+  "darwinBundleIdentifier": "io.openaide.ide",
+  "linuxIconName": "openaide",
+  "urlProtocol": "openaide",
+  "reportIssueUrl": "https://github.com/user/openaide/issues",
+  "quality": "stable",
+  "extensionsGallery": {
+    "serviceUrl": "https://open-vsx.org/vscode/gallery",
+    "itemUrl": "https://open-vsx.org/vscode/item"
+  },
+  "welcomePage": {
+    "title": "欢迎使用OpenAIDE IDE",
+    "subtitle": "AI 原生的智能编程环境"
+  },
+  "enableTelemetry": false,
+  "enableCrashReporter": false,
+  "linkProtectionTrustedDomains": [
+    "https://openaide.io",
+    "https://open-vsx.org",
+    "https://github.com"
+  ],
+  "defaultTheme": {
+    "dark": "Default Dark Modern",
+    "light": "Default Light Modern",
+    "hcDark": "Default High Contrast",
+    "hcLight": "Default High Contrast Light"
+  },
+  "configurationDefaults": {
+    "editor.fontSize": 14,
+    "editor.fontFamily": "'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+    "editor.fontLigatures": true,
+    "editor.minimap.enabled": false,
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": "active",
+    "editor.inlineSuggest.enabled": true,
+    "workbench.startupEditor": "none",
+    "workbench.tips.enabled": false,
+    "terminal.integrated.fontSize": 13,
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000
+  }
+}

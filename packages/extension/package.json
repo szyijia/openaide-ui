@@ -1,0 +1,351 @@
+{
+  "name": "@openaide/extension",
+  "version": "0.1.0",
+  "displayName": "OpenAIDE",
+  "description": "AI Native Coding Assistant - OpenAIDE (OpenAIDE)",
+  "publisher": "openaide",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "openaide-sidebar",
+          "title": "OpenAIDE",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "openaide-sidebar": [
+        {
+          "type": "webview",
+          "id": "openaide.chatView",
+          "name": "OpenAIDE"
+        },
+        {
+          "id": "openaide.diffPanel",
+          "name": "变更审查",
+          "when": "openaide.hasPendingDiffs"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "openaide.newChat",
+        "title": "OpenAIDE: 新建对话"
+      },
+      {
+        "command": "openaide.askAboutSelection",
+        "title": "OpenAIDE: 询问选中代码"
+      },
+      {
+        "command": "openaide.explainCode",
+        "title": "OpenAIDE: 解释代码"
+      },
+      {
+        "command": "openaide.refactorCode",
+        "title": "OpenAIDE: 重构代码"
+      },
+      {
+        "command": "openaide.generateTests",
+        "title": "OpenAIDE: 生成测试"
+      },
+      {
+        "command": "openaide.fixError",
+        "title": "OpenAIDE: 修复错误"
+      },
+      {
+        "command": "openaide.selectModel",
+        "title": "切换模型",
+        "icon": "$(symbol-enum)"
+      },
+      {
+        "command": "openaide.clearChat",
+        "title": "清空对话",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "openaide.newChat",
+        "title": "新建对话",
+        "icon": "$(add)"
+      },
+      {
+        "command": "openaide.acceptAllDiffs",
+        "title": "OpenAIDE: 接受所有变更"
+      },
+      {
+        "command": "openaide.rejectAllDiffs",
+        "title": "OpenAIDE: 拒绝所有变更"
+      },
+      {
+        "command": "openaide.sessionHistory",
+        "title": "历史记录",
+        "icon": "$(history)"
+      },
+      {
+        "command": "openaide.toggleCompletion",
+        "title": "OpenAIDE: 切换代码补全"
+      },
+      {
+        "command": "openaide.diff.acceptAll",
+        "title": "接受所有变更",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "openaide.diff.rejectAll",
+        "title": "拒绝所有变更",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "openaide.mcp.refresh",
+        "title": "刷新 MCP 服务器",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "openaide.mcp.addServer",
+        "title": "添加 MCP 服务器",
+        "icon": "$(add)"
+      },
+      {
+        "command": "openaide.memory.refresh",
+        "title": "刷新记忆",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "openaide.memory.search",
+        "title": "搜索记忆",
+        "icon": "$(search)"
+      },
+      {
+        "command": "openaide.memory.add",
+        "title": "添加记忆",
+        "icon": "$(add)"
+      },
+      {
+        "command": "openaide.memory.openProjectFile",
+        "title": "打开 .openaide.md",
+        "icon": "$(file)"
+      },
+      {
+        "command": "openaide.checkUpdate",
+        "title": "OpenAIDE: 检查更新"
+      },
+      {
+        "command": "openaide.viewChangelog",
+        "title": "OpenAIDE: 查看更新日志"
+      },
+      {
+        "command": "openaide.mcp.marketplace",
+        "title": "OpenAIDE: MCP 服务器市场",
+        "icon": "$(extensions)"
+      },
+      {
+        "command": "openaide.configureApiKeys",
+        "title": "OpenAIDE: 配置 API Key",
+        "icon": "$(key)"
+      },
+      {
+        "command": "openaide.openSettings",
+        "title": "设置",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "openaide.newChat",
+          "when": "view == openaide.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openaide.sessionHistory",
+          "when": "view == openaide.chatView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "openaide.openSettings",
+          "when": "view == openaide.chatView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "openaide.diff.acceptAll",
+          "when": "view == openaide.diffPanel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openaide.diff.rejectAll",
+          "when": "view == openaide.diffPanel",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "openaide.askAboutSelection",
+          "when": "editorHasSelection",
+          "group": "openaide@1"
+        },
+        {
+          "command": "openaide.explainCode",
+          "when": "editorHasSelection",
+          "group": "openaide@2"
+        },
+        {
+          "command": "openaide.refactorCode",
+          "when": "editorHasSelection",
+          "group": "openaide@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "openaide.newChat",
+        "key": "ctrl+shift+d",
+        "mac": "cmd+shift+d"
+      },
+      {
+        "command": "openaide.askAboutSelection",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "openaide.fixError",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f"
+      },
+      {
+        "command": "openaide.toggleCompletion",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c"
+      }
+    ],
+    "configuration": {
+      "title": "OpenAIDE",
+      "properties": {
+        "openaide.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "deepseek",
+            "qwen",
+            "glm",
+            "ollama",
+            "custom"
+          ],
+          "default": "anthropic",
+          "description": "LLM 模型提供者"
+        },
+        "openaide.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "默认模型"
+        },
+        "openaide.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key（通用配置，优先级低于各 Provider 独立配置）"
+        },
+        "openaide.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API Key（Claude 模型）"
+        },
+        "openaide.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key（GPT 模型）"
+        },
+        "openaide.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key"
+        },
+        "openaide.qwenApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "通义千问 API Key（DashScope）"
+        },
+        "openaide.glmApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "智谱 GLM API Key"
+        },
+        "openaide.custom.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "自定义模型的 API Key"
+        },
+        "openaide.custom.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "自定义模型的 API 端点（如 https://api.example.com/v1）"
+        },
+        "openaide.custom.model": {
+          "type": "string",
+          "default": "",
+          "description": "自定义模型名称（如 gpt-4o、glm-5.1）"
+        },
+        "openaide.completion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用 AI 代码补全"
+        },
+        "openaide.completion.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "description": "代码补全触发延迟（毫秒）"
+        },
+        "openaide.update.checkInterval": {
+          "type": "number",
+          "default": 4,
+          "description": "自动检查更新间隔（小时），0 表示禁用自动检查"
+        },
+        "openaide.update.includePrerelease": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否包含预发布版本"
+        },
+        "openaide.update.repo": {
+          "type": "string",
+          "default": "user/openaide",
+          "description": "GitHub 仓库地址 (owner/repo)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "dev": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "test:e2e": "tsc -p tests/tsconfig.json && node tests/e2e/run-tests.js",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "20",
+    "@types/vscode": "^1.96.0",
+    "@types/mocha": "^10.0.0",
+    "@types/glob": "^8.1.0",
+    "@vscode/test-electron": "^2.4.0",
+    "mocha": "^10.7.0",
+    "glob": "^11.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@openaide/core": "workspace:*",
+    "@openaide/protocol": "workspace:*",
+    "@openaide/shared": "workspace:*"
+  }
+}

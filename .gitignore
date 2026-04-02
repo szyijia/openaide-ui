@@ -1,0 +1,88 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+out/
+build/
+*.tsbuildinfo
+.turbo/
+
+# Source maps
+*.js.map
+*.map
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+pnpm-error.log*
+
+# IDE - VSCode
+.vscode-test/
+.vscode/
+*.code-workspace
+
+# IDE - Others
+.idea/
+*.swp
+*.swo
+*~
+
+# VSCode Extension
+*.vsix
+
+# Testing
+coverage/
+.nyc_output/
+
+# System files
+.DS_Store
+Thumbs.db
+*.pem
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Package manager
+package-lock.json
+yarn.lock
+# pnpm-lock.yaml # 保留锁定文件用于版本控制
+
+# Monorepo specific
+packages/**/node_modules/
+packages/**/dist/
+packages/**/out/
+packages/**/*.tsbuildinfo
+
+# VSCode Specific (from build/ directory)
+build/vscodium/VSCode-darwin-arm64/
+build/vscodium/src/
+build/vscodium/upstream/
+build/vscodium/vscode/
+build/vscodium/dev/
+
+# Desktop app builds
+*.app/
+*.dmg
+*.exe
+*.msi
+*.deb
+*.rpm
+*.snap
+*.AppImage
+
+# Misc
+.history/
+*.pid
+*.seed
+*.pid.lock
