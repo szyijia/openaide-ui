@@ -59,7 +59,9 @@ export class MCPMarketplacePanel implements vscode.Disposable {
 
   private async initMarketplace(): Promise<void> {
     try {
-      const mod = await import('@openaide/core/src/mcp/marketplace.js');
+      // 使用变量间接引用，避免 esbuild 静态解析（运行时动态加载）
+      const modulePath = ['..', '..', '..', '..', 'ts-code', 'src', 'mcp', 'marketplace.js'].join('/');
+      const mod = await import(modulePath);
       this.marketplace = new mod.MCPMarketplace() as unknown as MCPMarketplaceService;
     } catch (err) {
       console.error('[OpenAIDE] MCP Marketplace 初始化失败:', err);

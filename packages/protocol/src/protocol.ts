@@ -191,6 +191,14 @@ export interface StatusUpdateNotification {
   message?: string;
 }
 
+/** 工具轮次达到上限通知 */
+export interface ToolLimitReachedNotification {
+  conversationId: string;
+  currentRounds: number;
+  maxRounds: number;
+  message: string;
+}
+
 /** 代码补全结果 */
 export interface CompletionResultNotification {
   requestId: string;
@@ -214,7 +222,7 @@ export interface ToolApprovalRequestNotification {
 // ─── 共享类型 ───
 
 /** Agent 状态 */
-export type AgentState = 'idle' | 'thinking' | 'tool_calling' | 'streaming' | 'error';
+export type AgentState = 'idle' | 'thinking' | 'tool_calling' | 'streaming' | 'error' | 'waiting_for_continue';
 
 /** Token 用量 */
 export interface TokenUsage {
@@ -232,6 +240,7 @@ export const Methods = {
   // ── Extension → Core ──
   CHAT_SEND: 'chat/send',
   CHAT_CANCEL: 'chat/cancel',
+  CHAT_CONTINUE: 'chat/continue',
   CHAT_CLEAR: 'chat/clear',
   TOOL_APPROVE: 'tool/approve',
   TOOL_DENY: 'tool/deny',
@@ -256,6 +265,7 @@ export const Methods = {
   FILE_EDIT: 'file/edit',
   FILE_CREATE: 'file/create',
   STATUS_UPDATE: 'status/update',
+  CHAT_TOOL_LIMIT: 'chat/toolLimitReached',
   COMPLETION_RESULT: 'completion/result',
   TOOL_APPROVAL_REQUEST: 'tool/requestApproval',
 } as const;

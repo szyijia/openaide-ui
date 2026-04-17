@@ -12,6 +12,7 @@ set -e
 # 脚本位于 scripts/ 目录下，项目根目录为上一级
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 EXTENSION_PATH="$SCRIPT_DIR/packages/extension"
+TS_CODE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/ts-code"
 
 # 颜色输出
 GREEN='\033[0;32m'
@@ -125,8 +126,8 @@ if [ "$SKIP_BUILD" = false ]; then
 
   if [ "$CORE_ONLY" = true ]; then
     # Core 模式只需构建 protocol + core
-    info "构建 @openaide/core..."
-    pnpm build:core
+    info "构建 ts-code..."
+    (cd "$TS_CODE_DIR" && pnpm install && pnpm build)
   else
     # 完整构建
     info "构建 @openaide/extension..."
@@ -157,13 +158,13 @@ if [ "$CORE_ONLY" = true ]; then
   # 使用 tsx 直接运行 TypeScript 源码（开发模式）
   # 也可以用 node dist/bridge-server.js --bridge（编译后模式）
   if command -v tsx &>/dev/null; then
-    exec tsx packages/core/src/bridge-server.ts --bridge
+    exec tsx "$TS_CODE_DIR/src/bridge-server.ts" --bridge
   else
     # 回退到编译后的 JS
-    if [ -f "packages/core/dist/bridge-server.js" ]; then
-      exec node packages/core/dist/bridge-server.js --bridge
+    if [ -f "$TS_CODE_DIR/dist/bridge-server.js" ]; then
+      exec node "$TS_CODE_DIR/dist/bridge-server.js" --bridge
     else
-      error "未找到 tsx 命令且 Core 未编译。请先运行: pnpm install && pnpm build:core"
+      error "未找到 tsx 命令且 ts-code 未编译。请先运行: cd ts-code && pnpm install && pnpm build"
     fi
   fi
 fi

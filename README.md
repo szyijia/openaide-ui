@@ -161,7 +161,45 @@ pnpm lint
 pnpm format
 ```
 
-## � 支持的模型
+### 开发脚本
+
+项目提供了多个开发脚本，位于 `scripts/` 目录下：
+
+| 脚本 | 说明 | 用法 |
+|------|------|------|
+| `scripts/dev.sh` | 完整开发环境启动 | `./scripts/dev.sh` |
+| `scripts/cli.sh` | 终端交互式 Agent 对话 | `./scripts/cli.sh --model deepseek-chat` |
+| `scripts/dev-rust.sh` | Rust 引擎 (claw-code) 开发 | `./scripts/dev-rust.sh` |
+| `scripts/dev-ts.sh` | **TS 引擎 (claude-code) 开发** | `./scripts/dev-ts.sh` |
+| `scripts/build-desktop.sh` | 桌面版构建 | `./scripts/build-desktop.sh` |
+
+#### TS 引擎开发（dev-ts.sh）
+
+将 claude-code 作为 TS 引擎后端，通过 JSON-RPC 2.0 协议接入 openaide-ui：
+
+```bash
+# 完整构建 + 启动 VSCode（TS 引擎）
+./scripts/dev-ts.sh
+
+# 独立调试模式（stdin/stdout 交互，不启动 VSCode）
+./scripts/dev-ts.sh --core-only
+
+# 指定模型（如 DeepSeek）
+DEEPSEEK_API_KEY=sk-xxx ./scripts/dev-ts.sh --core-only --model deepseek-chat
+
+# 跳过构建，直接启动
+./scripts/dev-ts.sh --skip-build
+
+# 只检查环境状态
+./scripts/dev-ts.sh --check
+
+# 查看完整帮助
+./scripts/dev-ts.sh --help
+```
+
+> 详细的 Bridge Adapter 说明请参考 [claude-code/BRIDGE.md](../claude-code/BRIDGE.md)
+
+## 🤖 支持的模型
 
 | Provider | 模型 | 说明 |
 |----------|------|------|

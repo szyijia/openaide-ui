@@ -14,7 +14,13 @@ import type {
   ToolResultNotification,
   ChatDoneNotification,
   ChatErrorNotification,
+  ToolLimitReachedNotification,
 } from '../bridge/protocol.js';
+
+/** 内容块类型 — 用于按自然语言流顺序交替展示文本和工具调用 */
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_call'; toolCall: ToolCallInfo };
 
 /** Chat 消息类型 */
 interface ChatMessage {
@@ -24,6 +30,8 @@ interface ChatMessage {
   timestamp: number;
   thinking?: string;
   toolCalls?: ToolCallInfo[];
+  /** 有序内容块列表，按自然流顺序记录文本和工具调用的交替 */
+  contentBlocks?: ContentBlock[];
   usage?: { inputTokens: number; outputTokens: number; totalCostUSD?: number };
   isStreaming?: boolean;
 }
@@ -66,6 +74,7 @@ type WebviewMessage =
   | { type: 'acceptAllChanges' }
   | { type: 'rejectAllChanges' }
   | { type: 'viewChangeDiff'; path: string }
+  | { type: 'continueExecution' }
   | { type: 'webviewReady' };
 
 /**
@@ -150,6 +159,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.bridge.on('chat:error', (data: ChatErrorNotification) => {
       this.handleError(data);
     });
+
+    this.bridge.on('tool:limitReached', (data: ToolLimitReachedNotification) => {
+      this.handleToolLimitReached(data);
+    });
   }
 
   /**
@@ -185,6 +198,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'denyToolCall':
         await this.bridge.toolDeny({ toolCallId: msg.toolCallId, reason: msg.reason });
+        break;
+
+      case 'continueExecution':
+        console.log('[OpenAIDE] continueExecution: 用户选择继续执行');
+        await this.bridge.chatContinue();
         break;
 
       case 'selectModel':
@@ -309,6 +327,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       content: '',
       timestamp: Date.now(),
       toolCalls: [],
+      contentBlocks: [{ type: 'text', text: '' }],
       isStreaming: true,
     };
     this.messages.push(this.currentAssistantMessage);
@@ -339,6 +358,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     console.log('[OpenAIDE] chat:text delta:', text.slice(0, 50));
     this.currentAssistantMessage.content += text;
+
+    // 维护 contentBlocks：追加文本到最后一个 text 块，或创建新的 text 块
+    const blocks = this.currentAssistantMessage.contentBlocks!;
+    const lastBlock = blocks[blocks.length - 1];
+    if (lastBlock && lastBlock.type === 'text') {
+      lastBlock.text += text;
+    } else {
+      blocks.push({ type: 'text', text });
+    }
 
     // 如果上一个事件是工具结果，说明 AI 在工具调用后继续输出文字
     // 需要通知 Webview 创建新的 content 区块，实现自然的对话流
@@ -380,6 +408,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       isComplete: false,
     };
     this.currentAssistantMessage.toolCalls!.push(toolCall);
+    // 维护 contentBlocks：将工具调用按自然流顺序追加
+    this.currentAssistantMessage.contentBlocks!.push({ type: 'tool_call', toolCall });
     this.lastStreamEventType = 'toolCall';
     this.postToWebview({
       type: 'toolCall',
@@ -426,6 +456,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.currentAssistantMessage = null;
     }
     this.postToWebview({ type: 'error', error: data.error });
+  }
+
+  private handleToolLimitReached(data: ToolLimitReachedNotification): void {
+    console.log('[OpenAIDE] tool:limitReached:', data.message);
+    // 在当前 assistant 消息中追加提示文本
+    if (this.currentAssistantMessage) {
+      this.currentAssistantMessage.content += `\n\n⚠️ ${data.message}`;
+    }
+    // 通知 Webview 显示「继续」按钮
+    this.postToWebview({
+      type: 'toolLimitReached',
+      currentRounds: data.currentRounds,
+      maxRounds: data.maxRounds,
+      message: data.message,
+    });
   }
 
   // ─── Webview 通信 ───
@@ -488,23 +533,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.messages.push(userMsg);
         lastAssistantMsg = null;
       } else if (msg.role === 'assistant') {
-        // 助手消息 — 可能包含文本和工具调用
+        // 助手消息 — 可能包含文本和工具调用，按原始顺序构建 contentBlocks
         let textContent = '';
         const toolCalls: ToolCallInfo[] = [];
+        const contentBlocks: ContentBlock[] = [];
 
         if (typeof msg.content === 'string') {
           textContent = msg.content;
+          if (textContent) {
+            contentBlocks.push({ type: 'text', text: textContent });
+          }
         } else if (Array.isArray(msg.content)) {
           for (const block of msg.content as Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>) {
             if (block.type === 'text' && block.text) {
               textContent += block.text;
+              // 将文本追加到最后一个 text 块，或创建新的 text 块
+              const lastBlock = contentBlocks[contentBlocks.length - 1];
+              if (lastBlock && lastBlock.type === 'text') {
+                lastBlock.text += block.text;
+              } else {
+                contentBlocks.push({ type: 'text', text: block.text });
+              }
             } else if (block.type === 'tool_use') {
-              toolCalls.push({
+              const tc: ToolCallInfo = {
                 id: block.id || '',
                 name: block.name || '',
                 input: block.input || {},
                 isComplete: true,
-              });
+              };
+              toolCalls.push(tc);
+              contentBlocks.push({ type: 'tool_call', toolCall: tc });
             }
           }
         }
@@ -515,6 +573,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           content: textContent,
           timestamp: Date.now(),
           toolCalls,
+          contentBlocks,
         };
         this.messages.push(assistantMsg);
         lastAssistantMsg = assistantMsg;
@@ -1137,6 +1196,54 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       margin: 12px 0;
     }
 
+    /* ─── 工具轮次上限提示 ─── */
+    .tool-limit-banner {
+      margin: 12px 0;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.1));
+      border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 200, 0, 0.4));
+    }
+    .tool-limit-message {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--vscode-foreground);
+    }
+    .tool-limit-icon {
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .tool-limit-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .tool-limit-btn {
+      padding: 6px 16px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .tool-limit-btn.continue-btn {
+      background: var(--vscode-button-background, #0078d4);
+      color: var(--vscode-button-foreground, #fff);
+    }
+    .tool-limit-btn.continue-btn:hover {
+      background: var(--vscode-button-hoverBackground, #106ebe);
+    }
+    .tool-limit-btn.stop-btn {
+      background: var(--vscode-button-secondaryBackground, transparent);
+      color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+      border: 1px solid var(--vscode-button-border, var(--vscode-editorWidget-border, transparent));
+    }
+    .tool-limit-btn.stop-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(255,255,255,0.1));
+    }
+
     /* ─── 思考过程 ─── */
     .thinking-block {
       border-left: 2px solid var(--gongfeng-chat-text-secondary-foreground);
@@ -1195,6 +1302,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     .tool-call-status { font-size: 11px; }
     .tool-call-status.running { color: var(--vscode-button-background); }
+    .tool-call-status.running::before { content: ''; display: inline-block; width: 10px; height: 10px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: tool-spin 0.8s linear infinite; margin-right: 4px; vertical-align: middle; }
+    @keyframes tool-spin { to { transform: rotate(360deg); } }
     .tool-call-status.success { color: #40c8ae; }
     .tool-call-status.error { color: var(--gongfeng-errorForeground); }
 
@@ -2051,26 +2160,51 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         el.appendChild(thinkEl);
       }
 
-      // 消息内容
-      const content = document.createElement('div');
-      content.className = 'message-content';
-      content.id = 'content-' + msg.id;
-      content.innerHTML = renderMarkdown(msg.content);
-      if (msg.isStreaming) {
-        // CodeBuddy 风格的三点动画光标
-        const cursor = document.createElement('span');
-        cursor.className = 'dots-cursor';
-        cursor.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-        content.appendChild(cursor);
-        currentStreamEl = content;
-      }
-      el.appendChild(content);
-
-      // 工具调用
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
-        msg.toolCalls.forEach(tc => {
-          el.appendChild(renderToolCall(tc));
+      // 按自然语言流顺序渲染内容块（文本和工具调用交替）
+      if (msg.contentBlocks && msg.contentBlocks.length > 0) {
+        var textBlockIdx = 0;
+        msg.contentBlocks.forEach(function(block) {
+          if (block.type === 'text') {
+            var contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.id = textBlockIdx === 0
+              ? 'content-' + msg.id
+              : 'content-' + msg.id + '-' + textBlockIdx;
+            contentDiv.innerHTML = renderMarkdown(block.text);
+            if (msg.isStreaming && textBlockIdx === msg.contentBlocks.length - 1) {
+              var cursor = document.createElement('span');
+              cursor.className = 'dots-cursor';
+              cursor.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+              contentDiv.appendChild(cursor);
+              currentStreamEl = contentDiv;
+            }
+            el.appendChild(contentDiv);
+            textBlockIdx++;
+          } else if (block.type === 'tool_call') {
+            el.appendChild(renderToolCall(block.toolCall));
+          }
         });
+      } else {
+        // 兼容旧格式：没有 contentBlocks 时回退到旧逻辑
+        var content = document.createElement('div');
+        content.className = 'message-content';
+        content.id = 'content-' + msg.id;
+        content.innerHTML = renderMarkdown(msg.content);
+        if (msg.isStreaming) {
+          var cursor2 = document.createElement('span');
+          cursor2.className = 'dots-cursor';
+          cursor2.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+          content.appendChild(cursor2);
+          currentStreamEl = content;
+        }
+        el.appendChild(content);
+
+        // 旧格式的工具调用放在最后
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          msg.toolCalls.forEach(function(tc) {
+            el.appendChild(renderToolCall(tc));
+          });
+        }
       }
 
       // 用量信息
@@ -2085,6 +2219,61 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       scrollToBottom();
     }
 
+    // ─── 工具名友好映射 ───
+    var toolDisplayNames = {
+      // TS 引擎工具名
+      'file_read': '📄 读取文件',
+      'file_write': '✏️ 写入文件',
+      'file_edit': '🔧 编辑文件',
+      'glob': '📂 搜索文件',
+      'grep': '🔍 文本搜索',
+      'bash': '💻 执行命令',
+      'web_search': '🌐 网页搜索',
+      'web_fetch': '🌐 获取网页',
+      'use_mcp_tool': '🔌 MCP 工具',
+      'agent': '🤖 子任务',
+      'notebook_edit': '📓 编辑笔记本',
+      'todo_write': '📝 任务管理',
+      'ask_user': '💬 询问用户',
+      // Rust 引擎工具名
+      'read_file': '📄 读取文件',
+      'write_file': '✏️ 写入文件',
+      'edit_file': '🔧 编辑文件',
+      'glob_search': '📂 搜索文件',
+      'grep_search': '🔍 文本搜索',
+      'WebFetch': '🌐 获取网页',
+      'WebSearch': '🌐 网页搜索',
+      'TodoWrite': '📝 任务管理',
+      'Agent': '🤖 子任务',
+      'ToolSearch': '🔍 工具搜索',
+      'NotebookEdit': '📓 编辑笔记本',
+      'Skill': '⚡ 技能',
+      'Sleep': '⏳ 等待',
+      'SendUserMessage': '💬 发送消息',
+      'Config': '⚙️ 配置',
+      'StructuredOutput': '📊 结构化输出',
+      'REPL': '💻 交互执行',
+      'PowerShell': '💻 PowerShell',
+    };
+    function getToolDisplayName(name) {
+      if (toolDisplayNames[name]) return toolDisplayNames[name];
+      // MCP 工具: mcp__serverName__toolName → 🔌 toolName
+      if (name && name.startsWith('mcp__')) {
+        var parts = name.split('__');
+        return '🔌 ' + parts.slice(2).join('__');
+      }
+      return '🔧 ' + name;
+    }
+
+    // ─── 将所有运行中的工具调用标记为完成 ───
+    function markAllToolCallsComplete() {
+      var runningStatuses = document.querySelectorAll('.tool-call-status.running');
+      runningStatuses.forEach(function(status) {
+        status.className = 'tool-call-status success';
+        status.textContent = '✓ 完成';
+      });
+    }
+
     // ─── 渲染工具调用 ───
     function renderToolCall(tc) {
       const el = document.createElement('div');
@@ -2097,7 +2286,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       const name = document.createElement('span');
       name.className = 'tool-call-name';
-      name.innerHTML = '<svg class="tool-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M14.773 3.485l-.984-.984a.5.5 0 0 0-.707 0l-1.06 1.06-2.122-2.12a.5.5 0 0 0-.707 0L7.44 3.193a.5.5 0 0 0 0 .707l.354.354-4.95 4.95a.5.5 0 0 0-.146.353v2.122a.5.5 0 0 0 .5.5h2.12a.5.5 0 0 0 .354-.146l4.95-4.95.354.354a.5.5 0 0 0 .707 0l1.753-1.753a.5.5 0 0 0 0-.707l-2.12-2.122 1.06-1.06a.5.5 0 0 0 0-.707z"/></svg> ' + tc.name;
+      name.textContent = getToolDisplayName(tc.name);
 
       const status = document.createElement('span');
       status.className = 'tool-call-status ' + (tc.isComplete ? (tc.isError ? 'error' : 'success') : 'running');
@@ -2167,7 +2356,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       processed = processed.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
       processed = processed.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
       processed = processed.replace(/^---$/gm, '<hr>');
+      // 连续多个空行合并为一个段落间距，避免显示大量空白
+      processed = processed.replace(/\\n{2,}/g, '\\n\\n');
+      processed = processed.replace(/\\n\\n/g, '<br><br>');
       processed = processed.replace(/\\n/g, '<br>');
+      // 去除块级元素前后多余的 br
+      processed = processed.replace(/(<br>)+(<\\/?(?:h[2-4]|ul|ol|li|hr|div|pre|blockquote)[^>]*>)/gi, '$2');
+      processed = processed.replace(/(<\\/?(?:h[2-4]|ul|ol|li|hr|div|pre|blockquote)[^>]*>)(<br>)+/gi, '$1');
 
       // CodeBuddy 风格代码块
       processed = processed.replace(/%%CODEBLOCK_(\\d+)%%/g, (match, idx) => {
@@ -2444,6 +2639,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         case 'streamEnd':
           setStreamingState(false);
+          // 流结束时，将所有仍在运行中的工具调用标记为完成
+          markAllToolCallsComplete();
           if (msg.usage) {
             tokenInfo.textContent = formatUsage(msg.usage);
           }
@@ -2452,6 +2649,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'error':
           setStreamingState(false);
           break;
+
+        case 'toolLimitReached': {
+          // 显示工具轮次达到上限的提示和「继续」按钮
+          const limitBanner = document.createElement('div');
+          limitBanner.className = 'tool-limit-banner';
+          limitBanner.innerHTML = \`
+            <div class="tool-limit-message">
+              <span class="tool-limit-icon">⚠️</span>
+              <span>\${msg.message || '已达到最大工具调用轮数，是否继续？'}</span>
+            </div>
+            <div class="tool-limit-actions">
+              <button class="tool-limit-btn continue-btn" id="continueBtn">继续执行</button>
+              <button class="tool-limit-btn stop-btn" id="stopBtn">停止</button>
+            </div>
+          \`;
+          // 找到当前最后一条 assistant 消息并追加
+          const lastAssistant = messagesEl.querySelector('.message-bubble.assistant:last-of-type .message-content');
+          if (lastAssistant) {
+            lastAssistant.appendChild(limitBanner);
+          } else {
+            messagesEl.appendChild(limitBanner);
+          }
+          // 绑定按钮事件
+          limitBanner.querySelector('#continueBtn').addEventListener('click', () => {
+            limitBanner.remove();
+            vscode.postMessage({ type: 'continueExecution' });
+            setStreamingState(true);
+          });
+          limitBanner.querySelector('#stopBtn').addEventListener('click', () => {
+            limitBanner.remove();
+            vscode.postMessage({ type: 'cancelRequest' });
+            setStreamingState(false);
+          });
+          // 滚动到底部
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+          break;
+        }
 
         case 'clearMessages':
           messagesEl.innerHTML = '';
@@ -2493,6 +2727,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         case 'newContentBlock': {
           // AI 在工具调用后继续输出文字，创建新的 content 区块
+          // 新的 content block 意味着之前的工具调用已完成
+          markAllToolCallsComplete();
           const msgEl2 = document.getElementById('msg-' + msg.messageId);
           if (msgEl2) {
             createNewContentBlock(msg.messageId, msg.blockIndex);

@@ -41,6 +41,7 @@ import type {
   StatusUpdateNotification,
   CompletionResultNotification,
   ToolApprovalRequestNotification,
+  ToolLimitReachedNotification,
   PingParams,
   PongResult,
 } from './protocol.js';
@@ -59,6 +60,7 @@ export interface BridgeEvents {
   'status:update': (data: StatusUpdateNotification) => void;
   'completion:result': (data: CompletionResultNotification) => void;
   'tool:approvalRequest': (data: ToolApprovalRequestNotification) => void;
+  'tool:limitReached': (data: ToolLimitReachedNotification) => void;
   'connected': () => void;
   'disconnected': (code: number | null) => void;
   'error': (error: Error) => void;
@@ -104,6 +106,8 @@ export class AgentBridge extends EventEmitter {
   private config: Required<BridgeConfig>;
   private _isConnected = false;
   private outputChannel: vscode.OutputChannel;
+  /** 当前引擎标识（用于日志区分） */
+  private _engineLabel = 'unknown';
 
   constructor(config: BridgeConfig = {}) {
     super();
@@ -119,20 +123,27 @@ export class AgentBridge extends EventEmitter {
     this.outputChannel = vscode.window.createOutputChannel('OpenAIDE Bridge');
   }
 
+  /** 获取当前引擎标识 */
+  get engineLabel(): string {
+    return this._engineLabel;
+  }
+
   /** 写入日志到 Output Channel 和 console */
   private log(message: string): void {
     const timestamp = new Date().toISOString().slice(11, 23);
+    const tag = `Bridge/${this._engineLabel}`;
     const line = `[${timestamp}] ${message}`;
     this.outputChannel.appendLine(line);
-    console.log(`[Bridge] ${message}`);
+    console.log(`[${tag}] ${message}`);
   }
 
   /** 写入错误日志 */
   private logError(message: string): void {
     const timestamp = new Date().toISOString().slice(11, 23);
+    const tag = `Bridge/${this._engineLabel}`;
     const line = `[${timestamp}] ❌ ${message}`;
     this.outputChannel.appendLine(line);
-    console.error(`[Bridge] ${message}`);
+    console.error(`[${tag}] ${message}`);
   }
 
   /** 是否已连接 */
@@ -151,7 +162,7 @@ export class AgentBridge extends EventEmitter {
     return new Promise((resolve, reject) => {
       try {
         // 解析启动命令和参数
-        const { command, args } = this.resolveCoreCommand();
+        const { command, args, extraEnv } = this.resolveCoreCommand();
 
         this.log(`启动 Agent Core: ${command} ${args.join(' ')}`);
         this.log(`工作目录: ${this.config.cwd}`);
@@ -163,7 +174,7 @@ export class AgentBridge extends EventEmitter {
 
         this.process = spawn(command, args, {
           cwd: this.config.cwd,
-          env: { ...process.env, ...this.config.env },
+          env: { ...process.env, ...this.config.env, ...extraEnv },
           stdio: ['pipe', 'pipe', 'pipe'],
         });
 
@@ -221,7 +232,7 @@ export class AgentBridge extends EventEmitter {
 
         // 标记连接成功
         this._isConnected = true;
-        this.log('Agent Core 已连接');
+        this.log(`Agent Core 已连接 (engine: ${this._engineLabel})`);
         this.emit('connected');
         resolve();
       } catch (error) {
@@ -330,6 +341,11 @@ export class AgentBridge extends EventEmitter {
     await this.request(Methods.CHAT_CANCEL, params || {});
   }
 
+  /** 继续执行（超过工具轮次限制后，用户选择继续） */
+  async chatContinue(): Promise<void> {
+    await this.request(Methods.CHAT_CONTINUE, {});
+  }
+
   /** 清空对话历史 */
   async chatClear(): Promise<void> {
     await this.request(Methods.CHAT_CLEAR, {});
@@ -395,7 +411,18 @@ export class AgentBridge extends EventEmitter {
    * 如果超时或 Core 未响应，Promise 会被 reject。
    */
   async ping(params?: PingParams): Promise<PongResult> {
-    return this.request(Methods.PING, params || { timestamp: Date.now() }) as Promise<PongResult>;
+    const pong = await this.request(Methods.PING, params || { timestamp: Date.now() }) as PongResult;
+    // 用 Core 自报的 runtime 信息更新引擎标签
+    if (pong.runtime) {
+      const oldLabel = this._engineLabel;
+      // 保留文件检测阶段的具体标签（如 claw-code / claude-code），
+      // 仅在 unknown 时用 runtime 覆盖，或追加 runtime 信息
+      if (oldLabel === 'unknown') {
+        this._engineLabel = pong.runtime;
+      }
+      this.log(`🏷️  引擎确认: ${this._engineLabel} (runtime=${pong.runtime}, version=${pong.version}, status=${pong.status})`);
+    }
+    return pong;
   }
 
   /**
@@ -535,6 +562,9 @@ export class AgentBridge extends EventEmitter {
       case Methods.STATUS_UPDATE:
         this.emit('status:update', params as StatusUpdateNotification);
         break;
+      case Methods.CHAT_TOOL_LIMIT:
+        this.emit('tool:limitReached', params as ToolLimitReachedNotification);
+        break;
       case Methods.COMPLETION_RESULT:
         this.emit('completion:result', params as CompletionResultNotification);
         break;
@@ -566,7 +596,7 @@ export class AgentBridge extends EventEmitter {
    * - Rust Core: ./openaide-core --bridge
    * - Python Core: python bridge-server.py --bridge
    */
-  private resolveCoreCommand(): { command: string; args: string[] } {
+  private resolveCoreCommand(): { command: string; args: string[]; extraEnv: Record<string, string> } {
     // 如果用户显式指定了命令
     if (this.config.coreCommand) {
       const corePath = this.config.corePath || '';
@@ -574,6 +604,7 @@ export class AgentBridge extends EventEmitter {
       return {
         command: this.config.coreCommand,
         args: [...baseArgs, '--bridge', ...this.config.coreArgs],
+        extraEnv: {},
       };
     }
 
@@ -586,9 +617,12 @@ export class AgentBridge extends EventEmitter {
       case '.cjs':
       case '.mjs':
         // Node.js 脚本
+        // 在 Electron (VS Code) 环境中，process.execPath 指向 Electron Helper，
+        // 需要设置 ELECTRON_RUN_AS_NODE=1 让它以纯 Node.js 模式运行子进程
         return {
-          command: process.execPath, // 使用当前 Node.js 可执行文件
+          command: process.execPath,
           args: [corePath, '--bridge', ...this.config.coreArgs],
+          extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
         };
 
       case '.py':
@@ -596,6 +630,7 @@ export class AgentBridge extends EventEmitter {
         return {
           command: 'python3',
           args: [corePath, '--bridge', ...this.config.coreArgs],
+          extraEnv: {},
         };
 
       case '':
@@ -603,6 +638,7 @@ export class AgentBridge extends EventEmitter {
         return {
           command: corePath,
           args: ['--bridge', ...this.config.coreArgs],
+          extraEnv: {},
         };
 
       default:
@@ -610,6 +646,7 @@ export class AgentBridge extends EventEmitter {
         return {
           command: corePath,
           args: ['--bridge', ...this.config.coreArgs],
+          extraEnv: {},
         };
     }
   }
@@ -617,49 +654,76 @@ export class AgentBridge extends EventEmitter {
   /**
    * 查找 Agent Core 入口路径
    *
-   * 查找顺序：
-   * 1. 同目录下的 bridge-server.bundle.cjs（IDE 内置扩展模式）
-   * 2. 同目录下的 openaide-core 原生二进制（Go/Rust Core）
-   * 3. @openaide/core 包的 bridge-server.js（开发模式 - npm workspace）
-   * 4. 相对路径回退（开发模式 - 直接引用）
+   * 只在 dist/ 目录（即 __dirname）下查找引擎产物。
+   * 引擎切换通过物理隔离实现：每个 dev-xx.sh 脚本在启动前
+   * 清空 dist/ 中所有引擎产物，再放入对应引擎的产物。
+   * 这样 dist/ 中永远只有一个可用引擎，不会出现误选。
+   *
+   * 查找顺序（全部在 dist/ 下）：
+   * 1. bridge-server.bundle.cjs — TS 引擎 wrapper（claude-code / ts-code）
+   * 2. openaide-core — 原生二进制（claw-code / aide-code）
    */
   private findCorePath(): string {
     const fs = require('fs');
+    const distDir = __dirname; // esbuild 打包后 __dirname 就是 dist/
 
-    // 0. claw-code Rust bridge 二进制（开发模式 — 从 openAIDE 项目中查找）
-    // 查找顺序：release → debug
-    const clawCodePaths = [
-      // 相对于 openaide-ui 项目的 claw-code 路径
-      path.resolve(__dirname, '../../../../claw-code/rust/target/release/claw'),
-      path.resolve(__dirname, '../../../../claw-code/rust/target/debug/claw'),
-    ];
-    for (const clawPath of clawCodePaths) {
-      if (fs.existsSync(clawPath)) {
-        console.log(`[Bridge] 使用 claw-code Rust Core: ${clawPath}`);
-        return clawPath;
-      }
-    }
+    this.log(`🔍 在 dist/ 目录下查找引擎产物: ${distDir}`);
 
-    // 1. IDE 内置扩展模式：bundle 文件与 extension.js 在同一 dist/ 目录
-    const bundlePath = path.resolve(__dirname, 'bridge-server.bundle.cjs');
+    // 1. TS 引擎 bundle（由 dev-ts.sh / dev-core.sh 生成的 wrapper）
+    const bundlePath = path.resolve(distDir, 'bridge-server.bundle.cjs');
     if (fs.existsSync(bundlePath)) {
+      // 读取 wrapper 文件头部注释来区分具体引擎
+      try {
+        const head = fs.readFileSync(bundlePath, 'utf-8').slice(0, 500);
+        if (head.includes('ts-code')) {
+          this._engineLabel = 'ts-code';
+          this.log(`📦 使用 ts-code 引擎 (TS Bridge wrapper): ${bundlePath}`);
+        } else if (head.includes('claude-code')) {
+          this._engineLabel = 'claude-code';
+          this.log(`🟢 使用 claude-code 引擎 (TS Bridge wrapper): ${bundlePath}`);
+        } else {
+          this._engineLabel = 'ts-engine';
+          this.log(`🟢 使用 TS Bridge wrapper: ${bundlePath}`);
+        }
+      } catch {
+        this._engineLabel = 'ts-engine';
+        this.log(`🟢 使用 TS Bridge wrapper: ${bundlePath}`);
+      }
       return bundlePath;
     }
 
-    // 2. 原生二进制 Core（Go/Rust 编译产物）
+    // 2. 原生二进制 Core（由 dev-rust.sh 复制/软链到 dist/，或 IDE 内置）
     const binaryName = process.platform === 'win32' ? 'openaide-core.exe' : 'openaide-core';
-    const binaryPath = path.resolve(__dirname, binaryName);
+    const binaryPath = path.resolve(distDir, binaryName);
     if (fs.existsSync(binaryPath)) {
+      // 尝试通过软链目标路径判断具体引擎
+      try {
+        const realPath = fs.realpathSync(binaryPath);
+        if (realPath.includes('claw-code') || realPath.includes('claw')) {
+          this._engineLabel = 'claw-code';
+          this.log(`🦀 使用 claw-code 引擎 (Rust): ${binaryPath} → ${realPath}`);
+        } else if (realPath.includes('aide-code')) {
+          this._engineLabel = 'aide-code';
+          this.log(`⚡ 使用 aide-code 引擎 (Go): ${binaryPath} → ${realPath}`);
+        } else {
+          this._engineLabel = 'native-core';
+          this.log(`⚡ 使用原生二进制 Core: ${binaryPath}`);
+        }
+      } catch {
+        this._engineLabel = 'native-core';
+        this.log(`⚡ 使用原生二进制 Core: ${binaryPath}`);
+      }
       return binaryPath;
     }
 
-    // 3. 开发模式：通过 npm workspace 依赖解析
-    try {
-      return require.resolve('@openaide/core/dist/bridge-server.js');
-    } catch {
-      // 4. 开发模式回退：相对路径
-      return path.resolve(__dirname, '../../core/dist/bridge-server.js');
-    }
+    // 未找到任何引擎产物
+    this._engineLabel = 'unknown';
+    this.logError(`❌ dist/ 目录下未找到任何引擎产物！`);
+    this.logError(`请先运行对应的启动脚本：`);
+    this.logError(`  ./scripts/dev-core.sh   → ts-code 引擎`);
+    this.logError(`  ./scripts/dev-ts.sh     → claude-code 引擎`);
+    this.logError(`  ./scripts/dev-rust.sh   → claw-code 引擎`);
+    throw new Error('dist/ 目录下未找到任何引擎产物，请先运行 dev-xx.sh 脚本');
   }
 
   /** 释放资源 */

@@ -201,9 +201,10 @@ apply_branding() {
 build_extension() {
   log_info "构建OpenAIDE Extension..."
 
-  # 构建 Core（TypeScript 编译 + esbuild 打包为单文件 bundle）
-  (cd "$ROOT_DIR" && pnpm --filter @openaide/core build)
-  (cd "$ROOT_DIR" && pnpm --filter @openaide/core bundle)
+  # 构建 ts-code（独立项目，TypeScript 编译 + esbuild 打包为单文件 bundle）
+  local ts_code_dir="$ROOT_DIR/../ts-code"
+  (cd "$ts_code_dir" && pnpm install && pnpm build)
+  (cd "$ts_code_dir" && pnpm bundle)
 
   # 构建 Extension
   (cd "$ROOT_DIR" && pnpm --filter @openaide/extension build)
@@ -215,7 +216,7 @@ build_extension() {
   cp "$ROOT_DIR/packages/extension/package.json" "$ext_dir/"
 
   # 复制 Agent Core bundle（Extension 通过 fork() 启动此文件作为子进程）
-  cp "$ROOT_DIR/packages/core/dist/bridge-server.bundle.cjs" "$ext_dir/dist/"
+  cp "$ts_code_dir/dist/bridge-server.bundle.cjs" "$ext_dir/dist/"
   log_info "已复制 Agent Core bundle 到扩展目录"
 
   # 修正 package.json 中的扩展名称和依赖（VS Code 不支持 npm scope 格式和 workspace 依赖）

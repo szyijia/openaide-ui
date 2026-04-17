@@ -4,11 +4,9 @@
   "private": true,
   "description": "OpenAIDE — AI Native IDE based on VSCodium",
   "scripts": {
-    "dev:core": "pnpm --filter @openaide/core dev",
     "dev:extension": "pnpm --filter @openaide/extension dev",
     "build": "turbo run build",
     "build:protocol": "pnpm --filter @openaide/protocol build",
-    "build:core": "pnpm --filter @openaide/core build",
     "build:extension": "pnpm --filter @openaide/extension build",
     "build:ide": "pnpm --filter @openaide/ide build",
     "docs:dev": "pnpm --filter @openaide/docs dev",

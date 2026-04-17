@@ -18,6 +18,7 @@ set -e
 
 # 项目根目录
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TS_CODE_DIR="$(cd "$ROOT_DIR/.." && pwd)/ts-code"
 
 # 颜色输出
 GREEN='\033[0;32m'
@@ -90,8 +91,8 @@ if [ "$SKIP_BUILD" = false ]; then
   info "构建 @openaide/protocol..."
   pnpm build:protocol
 
-  info "构建 @openaide/core..."
-  pnpm build:core
+  info "构建 ts-code..."
+  (cd "$TS_CODE_DIR" && pnpm install && pnpm build)
 
   info "✅ 构建完成！"
 fi
@@ -107,13 +108,13 @@ cd "$ROOT_DIR"
 
 # 优先使用 tsx 直接运行 TypeScript（开发模式）
 if command -v tsx &>/dev/null; then
-  exec tsx packages/core/src/cli.ts
+  exec tsx "$TS_CODE_DIR/src/cli.ts"
 elif npx --no-install tsx --version &>/dev/null 2>&1; then
-  exec npx tsx packages/core/src/cli.ts
+  exec npx tsx "$TS_CODE_DIR/src/cli.ts"
 else
   # 回退到编译后的 JS
-  if [ -f "packages/core/dist/cli.js" ]; then
-    exec node packages/core/dist/cli.js
+  if [ -f "$TS_CODE_DIR/dist/cli.js" ]; then
+    exec node "$TS_CODE_DIR/dist/cli.js"
   else
     error "未找到 tsx 命令且 Core 未编译。请先运行: pnpm install"
   fi

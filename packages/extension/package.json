@@ -233,6 +233,26 @@
     "configuration": {
       "title": "OpenAIDE",
       "properties": {
+        "openaide.engine": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "typescript",
+            "rust"
+          ],
+          "default": "auto",
+          "description": "Agent 引擎类型：auto（自动检测）、typescript（TS 引擎）、rust（Rust 引擎）。设置为 typescript 可强制使用 TS 引擎，避免误用 Rust 二进制。",
+          "enumDescriptions": [
+            "自动检测：优先 Rust，回退 TypeScript",
+            "强制使用 TypeScript 引擎（claude-code bridge-adapter）",
+            "强制使用 Rust 引擎（claw-code）"
+          ]
+        },
+        "openaide.bridgeCmd": {
+          "type": "string",
+          "default": "",
+          "description": "自定义 Bridge 启动命令（由 dev-ts.sh 自动写入，通常无需手动设置）。例如：tsx /path/to/entry.ts --bridge"
+        },
         "openaide.provider": {
           "type": "string",
           "enum": [
@@ -344,7 +364,6 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
-    "@openaide/core": "workspace:*",
     "@openaide/protocol": "workspace:*",
     "@openaide/shared": "workspace:*"
   }

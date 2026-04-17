@@ -40,10 +40,13 @@ export async function activate(context: vscode.ExtensionContext) {
   console.log('OpenAIDE Extension 已激活');
 
   // ─── 1. 初始化 Bridge 通信 ───
-  bridge = new AgentBridge({
+  // 引擎选择通过物理隔离实现：dev-ts.sh / dev-rust.sh 在启动前
+  // 确保 dist/ 目录下只有一个可用引擎，findCorePath() 自动检测
+  const bridgeConfig: Record<string, unknown> = {
     cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     env: getApiKeyEnv(),
-  });
+  };
+  bridge = new AgentBridge(bridgeConfig as import('./bridge/agent-bridge.js').BridgeConfig);
 
   // ─── 2. 初始化 Chat Panel ───
   chatProvider = new ChatViewProvider(context.extensionUri, bridge);
@@ -694,6 +697,20 @@ async function startBridge(): Promise<void> {
   try {
     await bridge.start();
     updateAgentStatus('idle');
+
+    // 尝试 ping Core，确认引擎信息并输出到日志
+    try {
+      const pong = await bridge.ping({ timestamp: Date.now() });
+      const label = bridge.engineLabel;
+      console.log(`[OpenAIDE] ✅ Agent Core 就绪 — engine: ${label}, runtime: ${pong.runtime}, version: ${pong.version}`);
+      // 更新状态栏 tooltip 显示引擎信息
+      if (statusBarItem) {
+        statusBarItem.tooltip = `OpenAIDE — 就绪 (${label})`;
+      }
+    } catch {
+      // ping 失败不影响正常使用，Core 可能不支持 ping
+      console.log(`[OpenAIDE] ⚠️ Agent Core 已连接但 ping 未响应 (engine: ${bridge.engineLabel})`);
+    }
   } catch (error) {
     console.error('[OpenAIDE] Bridge 启动失败:', error);
     updateAgentStatus('error', 'Agent Core 启动失败');
@@ -799,79 +816,70 @@ function getInitialModelDisplayName(): string {
   return 'Claude Sonnet 4';
 }
 
-/** 从 VS Code 配置获取 API Key 环境变量 */
+/**
+ * 从 VS Code 配置获取环境变量
+ *
+ * 核心原则：界面上选了什么模型，就直接使用对应的 provider + apiKey + baseUrl，
+ * 不做任何优先级猜测或自动检测。通过统一的 OPENAIDE_* 环境变量传递给各引擎。
+ */
 function getApiKeyEnv(): Record<string, string> {
   const config = vscode.workspace.getConfiguration('openaide');
   const env: Record<string, string> = {};
 
-  // 各 Provider 独立的 API Key（优先级最高）
-  const anthropicKey = config.get<string>('anthropicApiKey', '');
-  const openaiKey = config.get<string>('openaiApiKey', '');
-  const deepseekKey = config.get<string>('deepseekApiKey', '');
-  const qwenKey = config.get<string>('qwenApiKey', '');
-  const glmKey = config.get<string>('glmApiKey', '');
+  // 各 Provider 的 API Key（从 VS Code 设置中读取，持久化在文件中）
+  const providerKeys: Record<string, string> = {
+    anthropic: config.get<string>('anthropicApiKey', ''),
+    openai: config.get<string>('openaiApiKey', ''),
+    deepseek: config.get<string>('deepseekApiKey', ''),
+    qwen: config.get<string>('qwenApiKey', ''),
+    glm: config.get<string>('glmApiKey', ''),
+    ollama: 'ollama', // Ollama 不需要真实 API Key
+    custom: config.get<string>('custom.apiKey', ''),
+  };
 
-  if (anthropicKey) env.ANTHROPIC_API_KEY = anthropicKey;
-  if (openaiKey) env.OPENAI_API_KEY = openaiKey;
-  if (deepseekKey) env.DEEPSEEK_API_KEY = deepseekKey;
-  if (qwenKey) env.DASHSCOPE_API_KEY = qwenKey;
-  if (glmKey) env.GLM_API_KEY = glmKey;
+  // 各 Provider 的 Base URL
+  const providerBaseUrls: Record<string, string> = {
+    glm: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    deepseek: 'https://api.deepseek.com/v1',
+    qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    custom: config.get<string>('custom.baseUrl', ''),
+  };
 
-  // 通用 apiKey 作为后备（按 provider 映射）
-  const apiKey = config.get<string>('apiKey', '');
-  const provider = config.get<string>('provider', 'anthropic');
-  if (apiKey) {
-    const providerEnvMap: Record<string, string> = {
-      anthropic: 'ANTHROPIC_API_KEY',
-      openai: 'OPENAI_API_KEY',
-      deepseek: 'DEEPSEEK_API_KEY',
-      qwen: 'DASHSCOPE_API_KEY',
-      glm: 'GLM_API_KEY',
-    };
-    const envKey = providerEnvMap[provider];
-    if (envKey && !env[envKey]) {
-      env[envKey] = apiKey;
-    }
-  }
-
-  // 自定义模型配置
-  const customApiKey = config.get<string>('custom.apiKey', '');
-  const customBaseUrl = config.get<string>('custom.baseUrl', '');
-  const customModel = config.get<string>('custom.model', '');
-  if (customApiKey) env.CUSTOM_API_KEY = customApiKey;
-  if (customBaseUrl) env.CUSTOM_BASE_URL = customBaseUrl;
-  if (customModel) env.CUSTOM_MODEL = customModel;
-
-  const model = config.get<string>('model');
+  // 读取界面上选择的模型（格式: "provider/model-name"）
+  const model = config.get<string>('model', '');
   if (model) {
-    env.OPENAIDE_MODEL = model;
-
-    // 根据当前选择的模型，设置通用的 OPENAIDE_API_KEY 和 OPENAIDE_BASE_URL
-    // 这样 Rust bridge 层可以统一使用这两个环境变量构造 OpenAI 兼容客户端
     const providerName = model.split('/')[0] || '';
-    const providerApiKeyMap: Record<string, string> = {
-      anthropic: anthropicKey,
-      openai: openaiKey,
-      deepseek: deepseekKey,
-      qwen: qwenKey,
-      glm: glmKey,
-      ollama: 'ollama', // Ollama 不需要真实 API Key
-      custom: config.get<string>('custom.apiKey', ''),
-    };
-    const providerBaseUrlMap: Record<string, string> = {
-      glm: 'https://open.bigmodel.cn/api/coding/paas/v4',
-      custom: config.get<string>('custom.baseUrl', ''),
-    };
+    const modelName = model.split('/').slice(1).join('/') || model;
 
-    const resolvedApiKey = providerApiKeyMap[providerName] || '';
+    // 设置统一的 OPENAIDE_* 环境变量 — 各引擎只需读取这组变量即可
+    env.OPENAIDE_PROVIDER = providerName;
+    env.OPENAIDE_MODEL = modelName;
+
+    const resolvedApiKey = providerKeys[providerName] || '';
     if (resolvedApiKey) {
       env.OPENAIDE_API_KEY = resolvedApiKey;
     }
-    const resolvedBaseUrl = providerBaseUrlMap[providerName] || '';
+
+    const resolvedBaseUrl = providerBaseUrls[providerName] || '';
     if (resolvedBaseUrl) {
       env.OPENAIDE_BASE_URL = resolvedBaseUrl;
     }
+
+    // 为 Rust 引擎 (claw-code) 保留兼容：它通过 ANTHROPIC_API_KEY 或
+    // OPENAI_API_KEY + OPENAI_BASE_URL 来检测 provider
+    if (providerName === 'anthropic') {
+      if (resolvedApiKey) env.ANTHROPIC_API_KEY = resolvedApiKey;
+    } else if (resolvedApiKey) {
+      env.OPENAI_API_KEY = resolvedApiKey;
+      if (resolvedBaseUrl) {
+        env.OPENAI_BASE_URL = resolvedBaseUrl;
+      }
+    }
   }
+
+  // 自定义模型的额外配置
+  const customModel = config.get<string>('custom.model', '');
+  if (customModel) env.CUSTOM_MODEL = customModel;
 
   return env;
 }

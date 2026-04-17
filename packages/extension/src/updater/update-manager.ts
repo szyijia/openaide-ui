@@ -43,7 +43,9 @@ interface IAutoUpdateService {
  * 动态加载 AutoUpdateService（解决 ESM/CJS 兼容问题）
  */
 async function loadAutoUpdater(config: Record<string, any>): Promise<IAutoUpdateService> {
-  const mod = await import('@openaide/core/src/updater/auto-update.js');
+  // 使用变量间接引用，避免 esbuild 静态解析（运行时动态加载）
+  const modulePath = ['..', '..', '..', '..', 'ts-code', 'src', 'updater', 'auto-update.js'].join('/');
+  const mod = await import(modulePath);
   return mod.createAutoUpdater(config) as IAutoUpdateService;
 }
 
