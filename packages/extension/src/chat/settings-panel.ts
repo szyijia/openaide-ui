@@ -702,15 +702,15 @@ export class SettingsPanel {
     <!-- 左侧菜单 -->
     <div class="side-menu">
       <div class="side-menu-title">设置</div>
-      <div class="menu-item active" data-panel="models" onclick="switchPanel('models')">
+      <div class="menu-item active" data-panel="models">
         <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v9A1.5 1.5 0 0 0 2.5 14h11a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 13.5 2h-11zM2 3.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-9zM4 5h8v1H4V5zm0 3h5v1H4V8z"/></svg>
         模型
       </div>
-      <div class="menu-item" data-panel="mcp" onclick="switchPanel('mcp')">
+      <div class="menu-item" data-panel="mcp">
         <svg viewBox="0 0 16 16" fill="currentColor"><path d="M14.773 3.485l-.984-.984a.5.5 0 0 0-.707 0l-1.06 1.06-2.122-2.12a.5.5 0 0 0-.707 0L7.44 3.193a.5.5 0 0 0 0 .707l.354.354-4.95 4.95a.5.5 0 0 0-.146.353v2.122a.5.5 0 0 0 .5.5h2.12a.5.5 0 0 0 .354-.146l4.95-4.95.354.354a.5.5 0 0 0 .707 0l1.753-1.753a.5.5 0 0 0 0-.707l-2.12-2.122 1.06-1.06a.5.5 0 0 0 0-.707z"/></svg>
         MCP
       </div>
-      <div class="menu-item" data-panel="memory" onclick="switchPanel('memory')">
+      <div class="menu-item" data-panel="memory">
         <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C4.13 1 1 3.58 1 6.75c0 1.77 1.06 3.35 2.72 4.38L3 15l3.03-2.02c.64.13 1.3.2 1.97.2 3.87 0 7-2.58 7-5.43S11.87 1 8 1zm0 9.86c-.55 0-1.08-.07-1.59-.19l-.34-.08-1.56 1.04.37-1.85-.3-.2C3.58 8.87 2.75 7.85 2.75 6.75 2.75 4.54 5.1 2.75 8 2.75s5.25 1.79 5.25 4c0 2.21-2.35 4.11-5.25 4.11z"/></svg>
         记忆
       </div>
@@ -724,7 +724,7 @@ export class SettingsPanel {
         <p class="section-desc">配置 AI 模型的 API Key。已配置的模型会出现在对话框的模型选择器中。</p>
         <div id="models-list"></div>
         <div style="margin-top:16px">
-          <button class="btn secondary" onclick="showAddModelDialog()">
+          <button class="btn secondary" id="btn-add-model">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
             添加自定义模型
           </button>
@@ -736,11 +736,11 @@ export class SettingsPanel {
         <h1 class="section-title">MCP 服务器</h1>
         <p class="section-desc">MCP（Model Context Protocol）服务器为 AI 提供额外的工具和资源能力。</p>
         <div style="margin-bottom:16px;display:flex;gap:8px">
-          <button class="btn" onclick="vscode.postMessage({type:'mcpAddServer'})">
+          <button class="btn" id="btn-mcp-add">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
             添加服务器
           </button>
-          <button class="btn secondary" onclick="vscode.postMessage({type:'mcpEditConfig'})">编辑配置文件</button>
+          <button class="btn secondary" id="btn-mcp-edit">编辑配置文件</button>
         </div>
         <div id="mcp-list"></div>
       </div>
@@ -750,11 +750,11 @@ export class SettingsPanel {
         <h1 class="section-title">记忆管理</h1>
         <p class="section-desc">AI 的记忆系统，跨会话保持上下文，记住你的偏好和项目规范。</p>
         <div style="margin-bottom:16px;display:flex;gap:8px">
-          <button class="btn" onclick="vscode.postMessage({type:'memoryAdd'})">
+          <button class="btn" id="btn-memory-add">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
             添加记忆
           </button>
-          <button class="btn secondary" onclick="vscode.postMessage({type:'memoryRefresh'})">刷新</button>
+          <button class="btn secondary" id="btn-memory-refresh">刷新</button>
         </div>
         <div id="memory-list"></div>
       </div>
@@ -764,7 +764,7 @@ export class SettingsPanel {
   <!-- 添加自定义模型对话框 -->
   <div class="dialog-overlay" id="add-model-dialog">
     <div class="dialog-box">
-      <button class="dialog-close" onclick="hideAddModelDialog()">✕</button>
+      <button class="dialog-close" id="btn-dialog-close">✕</button>
       <div class="dialog-title">添加自定义模型</div>
       <div class="form-row">
         <label class="form-label">模型名称</label>
@@ -780,8 +780,8 @@ export class SettingsPanel {
         <input class="form-input" id="custom-model-key" type="password" placeholder="sk-..." />
       </div>
       <div class="form-actions">
-        <button class="btn" onclick="saveCustomModel()">保存</button>
-        <button class="btn secondary" onclick="hideAddModelDialog()">取消</button>
+        <button class="btn" id="btn-dialog-save">保存</button>
+        <button class="btn secondary" id="btn-dialog-cancel">取消</button>
       </div>
     </div>
   </div>
@@ -807,6 +807,23 @@ export class SettingsPanel {
       document.querySelectorAll('.settings-panel').forEach(el => el.classList.remove('active'));
       document.getElementById('panel-' + name).classList.add('active');
     }
+
+    // ─── 绑定菜单项点击事件 ───
+    document.querySelectorAll('.menu-item[data-panel]').forEach(item => {
+      item.addEventListener('click', () => {
+        switchPanel(item.getAttribute('data-panel'));
+      });
+    });
+
+    // ─── 绑定按钮点击事件 ───
+    document.getElementById('btn-add-model').addEventListener('click', showAddModelDialog);
+    document.getElementById('btn-mcp-add').addEventListener('click', () => vscode.postMessage({ type: 'mcpAddServer' }));
+    document.getElementById('btn-mcp-edit').addEventListener('click', () => vscode.postMessage({ type: 'mcpEditConfig' }));
+    document.getElementById('btn-memory-add').addEventListener('click', () => vscode.postMessage({ type: 'memoryAdd' }));
+    document.getElementById('btn-memory-refresh').addEventListener('click', () => vscode.postMessage({ type: 'memoryRefresh' }));
+    document.getElementById('btn-dialog-close').addEventListener('click', hideAddModelDialog);
+    document.getElementById('btn-dialog-save').addEventListener('click', saveCustomModel);
+    document.getElementById('btn-dialog-cancel').addEventListener('click', hideAddModelDialog);
 
     // ─── 模型渲染 ───
     function renderModels() {

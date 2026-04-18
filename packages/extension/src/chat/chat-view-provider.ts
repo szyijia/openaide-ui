@@ -62,6 +62,7 @@ type WebviewMessage =
   | { type: 'clearChat' }
   | { type: 'approveToolCall'; toolCallId: string }
   | { type: 'denyToolCall'; toolCallId: string; reason?: string }
+  | { type: 'alwaysApproveToolCall'; toolCallId: string }
   | { type: 'selectModel' }
   | { type: 'copyCode'; code: string }
   | { type: 'insertCode'; code: string }
@@ -90,6 +91,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private currentAssistantMessage: ChatMessage | null = null;
   private messageIdCounter = 0;
   private pendingChanges: PendingChangeInfo[] = [];
+  /** 审批回调映射：toolCallId -> 回调函数 */
+  _approvalCallbacks = new Map<string, (action: 'approve' | 'deny' | 'always') => void>();
   private onChangeAction = new vscode.EventEmitter<{ type: 'accept' | 'reject' | 'acceptAll' | 'rejectAll'; path?: string }>();
   readonly onPendingChangeAction = this.onChangeAction.event;
 
@@ -116,11 +119,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     };
 
-    webviewView.webview.html = this.getHtmlContent(webviewView.webview);
+    const htmlContent = this.getHtmlContent(webviewView.webview);
+    console.log('[OpenAIDE] HTML length:', htmlContent.length, 'has <script>:', htmlContent.includes('<script'), 'has acquireVsCodeApi:', htmlContent.includes('acquireVsCodeApi'));
+    // 检查 HTML 中是否有未转义的模板字符串问题
+    const scriptStart = htmlContent.indexOf('<script');
+    const scriptEnd = htmlContent.indexOf('</script>');
+    console.log('[OpenAIDE] Script tag range:', scriptStart, '-', scriptEnd, 'script length:', scriptEnd - scriptStart);
+    webviewView.webview.html = htmlContent;
 
     // 监听 Webview 消息
-    webviewView.webview.onDidReceiveMessage((msg: WebviewMessage) => {
-      this.handleWebviewMessage(msg);
+    console.log('[OpenAIDE] Setting up onDidReceiveMessage listener');
+    webviewView.webview.onDidReceiveMessage((msg: WebviewMessage | { type: 'webviewLog'; level: string; args: string[] }) => {
+      console.log('[OpenAIDE] Received message from webview, type:', msg.type);
+      // 桥接 webview 日志到 Extension Host
+      if (msg.type === 'webviewLog') {
+        const logMsg = msg as { type: 'webviewLog'; level: string; args: string[] };
+        const text = '[Webview] ' + logMsg.args.join(' ');
+        if (logMsg.level === 'error') {
+          console.error(text);
+        } else if (logMsg.level === 'warn') {
+          console.warn(text);
+        } else {
+          console.log(text);
+        }
+        return;
+      }
+      this.handleWebviewMessage(msg as WebviewMessage);
     });
 
     // 视图可见时同步消息
@@ -194,10 +218,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'approveToolCall':
         await this.bridge.toolApprove({ toolCallId: msg.toolCallId });
+        // 通知 extension.ts 中的审批回调
+        this._approvalCallbacks.get(msg.toolCallId)?.('approve');
+        this._approvalCallbacks.delete(msg.toolCallId);
         break;
 
       case 'denyToolCall':
         await this.bridge.toolDeny({ toolCallId: msg.toolCallId, reason: msg.reason });
+        this._approvalCallbacks.get(msg.toolCallId)?.('deny');
+        this._approvalCallbacks.delete(msg.toolCallId);
+        break;
+
+      case 'alwaysApproveToolCall':
+        await this.bridge.toolApprove({ toolCallId: msg.toolCallId });
+        this._approvalCallbacks.get(msg.toolCallId)?.('always');
+        this._approvalCallbacks.delete(msg.toolCallId);
         break;
 
       case 'continueExecution':
@@ -296,10 +331,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * 发送用户消息
    */
   private async sendUserMessage(text: string): Promise<void> {
-    if (!text.trim()) return;
+    console.log('[OpenAIDE] sendUserMessage called, text length:', text.length);
+    if (!text.trim()) {
+      console.log('[OpenAIDE] sendUserMessage: text is empty, returning');
+      return;
+    }
 
     // 检查是否有 API Key 配置
     if (!this.hasAnyApiKeyConfigured()) {
+      console.log('[OpenAIDE] sendUserMessage: no API key configured');
       const action = await vscode.window.showWarningMessage(
         '尚未配置任何大模型 API Key，请先在设置中配置后再使用。',
         '前往设置',
@@ -335,6 +375,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // 发送到 Agent Core（不 await，流式事件通过 bridge 通知返回）
     console.log('[OpenAIDE] chatSend 发送消息到 Agent Core:', text.slice(0, 100));
+    console.log('[OpenAIDE] bridge 状态:', this.bridge ? 'exists' : 'null');
     this.bridge.chatSend({ message: text }).catch((error) => {
       console.error('[OpenAIDE] chatSend 错误:', error);
       this.handleError({
@@ -493,6 +534,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * 在聊天面板中显示工具审批请求
+   * 返回用户的选择：'approve' | 'deny' | 'always'
+   */
+  showToolApproval(toolCallId: string, toolName: string, description: string): Promise<'approve' | 'deny' | 'always'> {
+    return new Promise((resolve) => {
+      // 注册回调
+      this._approvalCallbacks.set(toolCallId, resolve);
+      // 发送审批请求到 webview
+      this.postToWebview({
+        type: 'toolApprovalRequest',
+        toolCallId,
+        toolName,
+        description,
+      });
+    });
+  }
+
+  /**
    * 请求同步消息（切换会话后调用）
    */
   requestSync(): void {
@@ -611,8 +670,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // 如果已存在同路径的变更，更新它
     const existingIdx = this.pendingChanges.findIndex(c => c.path === change.path);
     if (existingIdx >= 0) {
+      console.log(`[OpenAIDE] 更新已有变更: ${change.path} (index=${existingIdx})`);
       this.pendingChanges[existingIdx] = change;
     } else {
+      console.log(`[OpenAIDE] 新增变更: ${change.path} (total=${this.pendingChanges.length + 1})`);
       this.pendingChanges.push(change);
     }
     this.postToWebview({ type: 'pendingChanges', changes: this.pendingChanges });
@@ -735,6 +796,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * 生成 Webview HTML 内容（参照 CodeBuddy 风格）
+   *
+   * ⚠️⚠️⚠️ 修改内嵌 JS 前必读 ⚠️⚠️⚠️
+   * 返回值是 **反引号模板字符串**，里面的 `<script>` 内嵌 JS 会经过
+   * **两层转义**（TS 模板字符串 + JS 字符串字面量），因此：
+   *
+   *   • 想在最终正则/字符串里保留 1 个 `\`，源码必须写 **4 个** `\\\\`
+   *   • 想匹配字面反斜杠，源码必须写 **8 个** `\\\\\\\\`
+   *   • 反引号必须写成 `\``（否则提前结束模板）
+   *   • **不要**在内嵌 JS 里用 `/.../` 字面量正则写含反斜杠的模式，
+   *     一律改用 `new RegExp('...')` 构造
+   *
+   * 历史上这个坑已经踩过 2 次（2026-04-18 的 `/\\/g`、2026-04-19 的
+   * `renderMarkdown` 13 个正则），每次都导致整个 webview JS 语法错误、
+   * 所有按钮失效、模型切换失效。
+   *
+   * 📖 完整转义对照表、修复清单、自检脚本：
+   *    `openaide-ui/docs/webview-template-string-escape-pitfall.md`
    */
   private getHtmlContent(webview: vscode.Webview): string {
     const nonce = getNonce();
@@ -1194,6 +1272,70 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       border: none;
       border-top: 1px solid var(--vscode-editorWidget-border, transparent);
       margin: 12px 0;
+    }
+
+    /* ─── 工具审批请求 ─── */
+    .tool-approval-banner {
+      margin: 12px 0;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: var(--vscode-inputValidation-infoBackground, rgba(0, 120, 212, 0.1));
+      border: 1px solid var(--vscode-inputValidation-infoBorder, rgba(0, 120, 212, 0.4));
+    }
+    .tool-approval-message {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--vscode-foreground);
+    }
+    .tool-approval-icon {
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .tool-approval-desc {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 10px;
+    }
+    .tool-approval-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .tool-approval-btn {
+      padding: 6px 16px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .tool-approval-btn.approve-btn {
+      background: var(--vscode-button-background, #0078d4);
+      color: var(--vscode-button-foreground, #fff);
+    }
+    .tool-approval-btn.approve-btn:hover {
+      background: var(--vscode-button-hoverBackground, #106ebe);
+    }
+    .tool-approval-btn.always-btn {
+      background: var(--vscode-button-secondaryBackground, #3a3d41);
+      color: var(--vscode-button-secondaryForeground, #fff);
+    }
+    .tool-approval-btn.always-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, #45494e);
+    }
+    .tool-approval-btn.deny-btn {
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      border: 1px solid var(--vscode-input-border, #3c3c3c);
+    }
+    .tool-approval-btn.deny-btn:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+    .tool-approval-banner.resolved {
+      opacity: 0.6;
+      pointer-events: none;
     }
 
     /* ─── 工具轮次上限提示 ─── */
@@ -1746,12 +1888,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       font-weight: 600;
       user-select: none;
       flex-shrink: 0;
+      cursor: pointer;
     }
 
     .changes-panel__header-left {
       display: flex;
       align-items: center;
       gap: 6px;
+    }
+
+    .changes-panel__toggle {
+      display: inline-block;
+      font-size: 10px;
+      transition: transform 0.2s ease;
+      transform: rotate(90deg);
+    }
+
+    .changes-panel.collapsed .changes-panel__toggle {
+      transform: rotate(0deg);
     }
 
     .changes-panel__badge {
@@ -1797,6 +1951,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     .changes-panel__body {
       overflow-y: auto;
       flex: 1;
+      transition: max-height 0.2s ease;
+    }
+
+    .changes-panel.collapsed .changes-panel__body {
+      max-height: 0 !important;
+      overflow: hidden;
+    }
+
+    .changes-panel.collapsed .changes-panel__actions {
+      display: none;
     }
 
     .changes-panel__body::-webkit-scrollbar { width: 4px; }
@@ -1985,9 +2149,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         <!-- 变更面板（CodeBuddy diff-panel 风格） -->
         <div class="changes-panel" id="changes-panel">
-          <div class="changes-panel__header">
+          <div class="changes-panel__header" id="changes-header">
             <div class="changes-panel__header-left">
-              <span>📝 文件变更</span>
+              <span class="changes-panel__toggle" id="changes-toggle">▶</span>
+              <span>文件变更</span>
               <span class="changes-panel__badge" id="changes-count">0</span>
             </div>
             <div class="changes-panel__actions">
@@ -2046,13 +2211,46 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         </div>
       </div>
     </div>
-
-    </div>
   </div>
 
   <script nonce="${nonce}">
-    console.log('[OpenAIDE] Script tag executing - first line');
+    // [调试] 在 JS 最开头添加可见标记，确认脚本是否执行
+    try {
+      document.title = 'JS_RUNNING';
+      // 在页面顶部添加一个临时的可见调试条
+      var _dbg = document.createElement('div');
+      _dbg.id = '_debug_bar';
+      _dbg.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#0f0;color:#000;font-size:12px;padding:2px 8px;text-align:center;';
+      _dbg.textContent = 'JS OK - ' + new Date().toLocaleTimeString();
+      document.body.insertBefore(_dbg, document.body.firstChild);
+      // 3秒后自动移除调试条
+      setTimeout(function() { var d = document.getElementById('_debug_bar'); if(d) d.remove(); }, 3000);
+    } catch(e) { /* ignore */ }
+
+    // 获取 VS Code API
     const vscode = acquireVsCodeApi();
+
+    // 日志桥接：将 webview 的 console 输出转发到 Extension Host
+    const _origConsole = { log: console.log.bind(console), warn: console.warn.bind(console), error: console.error.bind(console) };
+    function bridgeLog(level, args) {
+      _origConsole[level](...args);
+      try {
+        vscode.postMessage({ type: 'webviewLog', level: level, args: Array.from(args).map(function(a) { return typeof a === 'object' ? JSON.stringify(a) : String(a); }) });
+      } catch(e) { /* ignore */ }
+    }
+    console.log = function() { bridgeLog('log', arguments); };
+    console.warn = function() { bridgeLog('warn', arguments); };
+    console.error = function() { bridgeLog('error', arguments); };
+
+    // 全局错误捕获 - 帮助定位 JS 执行中断问题
+    window.onerror = function(msg, url, line, col, error) {
+      console.error('[OpenAIDE][FATAL] JS Error:', msg, 'at line:', line, 'col:', col, error);
+      return false;
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('[OpenAIDE][FATAL] Unhandled rejection:', e.reason);
+    });
+    console.log('[OpenAIDE] Script tag executing - first line');
     const messagesEl = document.getElementById('messages');
     const welcomeScreen = document.getElementById('welcome-screen');
     const chatContainer = document.getElementById('chat-container');
@@ -2075,7 +2273,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // ─── 发送消息 ───
     function sendMessage() {
       const text = inputEl.value.trim();
-      if (!text || isStreaming) return;
+      console.log('[OpenAIDE][DEBUG] sendMessage called, text:', JSON.stringify(text), 'isStreaming:', isStreaming);
+      if (!text || isStreaming) {
+        console.log('[OpenAIDE][DEBUG] sendMessage blocked: text empty?', !text, 'isStreaming?', isStreaming);
+        return;
+      }
       autoScrollEnabled = true; // 发送新消息时重置自动滚动
       vscode.postMessage({ type: 'sendMessage', message: text });
       inputEl.value = '';
@@ -2332,8 +2534,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!text) return '';
       
       const codeBlocks = [];
-      let processed = text.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, (match, lang, code) => {
-        const idx = codeBlocks.length;
+      let processed = text.replace(new RegExp('\`\`\`(\\\\w*)\\\\n([\\\\s\\\\S]*?)\`\`\`', 'g'), function(match, lang, code) {
+        var idx = codeBlocks.length;
         codeBlocks.push({ lang: lang || '', code: code });
         return '%%CODEBLOCK_' + idx + '%%';
       });
@@ -2347,26 +2549,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       processed = processed.replace(/^## (.+)$/gm, '<h3>$1</h3>');
       processed = processed.replace(/^# (.+)$/gm, '<h2>$1</h2>');
 
-      processed = processed.replace(/^\\s*[-*] (.+)$/gm, '<li>$1</li>');
-      processed = processed.replace(/(<li>.*<\\/li>\\n?)+/g, '<ul>$&</ul>');
-      processed = processed.replace(/^\\s*(\\d+)\\. (.+)$/gm, '<li>$2</li>');
+      processed = processed.replace(new RegExp('^\\\\s*[-*] (.+)$', 'gm'), '<li>$1</li>');
+      processed = processed.replace(new RegExp('(<li>.*<\\\\/li>\\\\n?)+', 'g'), '<ul>$&</ul>');
+      processed = processed.replace(new RegExp('^\\\\s*(\\\\d+)\\\\. (.+)$', 'gm'), '<li>$2</li>');
 
-      processed = processed.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" title="$2">$1</a>');
-      processed = processed.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
-      processed = processed.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-      processed = processed.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
-      processed = processed.replace(/^---$/gm, '<hr>');
+      processed = processed.replace(new RegExp('\\\\[([^\\\\]]+)\\\\]\\\\(([^)]+)\\\\)', 'g'), '<a href="$2" title="$2">$1</a>');
+      processed = processed.replace(new RegExp('\`([^\`]+)\`', 'g'), '<code>$1</code>');
+      processed = processed.replace(new RegExp('\\\\*\\\\*([^*]+)\\\\*\\\\*', 'g'), '<strong>$1</strong>');
+      processed = processed.replace(new RegExp('\\\\*([^*]+)\\\\*', 'g'), '<em>$1</em>');      processed = processed.replace(/^---$/gm, '<hr>');
       // 连续多个空行合并为一个段落间距，避免显示大量空白
-      processed = processed.replace(/\\n{2,}/g, '\\n\\n');
-      processed = processed.replace(/\\n\\n/g, '<br><br>');
-      processed = processed.replace(/\\n/g, '<br>');
+      processed = processed.replace(new RegExp('\\\\n{2,}', 'g'), '\\\\n\\\\n');
+      processed = processed.replace(new RegExp('\\\\n\\\\n', 'g'), '<br><br>');
+      processed = processed.replace(new RegExp('\\\\n', 'g'), '<br>');
       // 去除块级元素前后多余的 br
-      processed = processed.replace(/(<br>)+(<\\/?(?:h[2-4]|ul|ol|li|hr|div|pre|blockquote)[^>]*>)/gi, '$2');
-      processed = processed.replace(/(<\\/?(?:h[2-4]|ul|ol|li|hr|div|pre|blockquote)[^>]*>)(<br>)+/gi, '$1');
-
+      processed = processed.replace(new RegExp('(<br>)+(<\\\\/?(?:h[2-4]|ul|ol|li|hr|div|pre|blockquote)[^>]*>)', 'gi'), '$2');
+      processed = processed.replace(new RegExp('(<\\\\/?(?:h[2-4]|ul|ol|li|hr|div|pre|blockquote)[^>]*>)(<br>)+', 'gi'), '$1');
       // CodeBuddy 风格代码块
-      processed = processed.replace(/%%CODEBLOCK_(\\d+)%%/g, (match, idx) => {
-        const block = codeBlocks[parseInt(idx)];
+      processed = processed.replace(new RegExp('%%CODEBLOCK_(\\\\d+)%%', 'g'), function(match, idx) {        const block = codeBlocks[parseInt(idx)];
         const escapedCode = block.code
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
@@ -2481,6 +2680,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       // Enter 发送消息
       if (e.key === 'Enter' && !e.shiftKey) {
+        console.log('[OpenAIDE][DEBUG] Enter pressed, isStreaming:', isStreaming);
         e.preventDefault();
         if (isStreaming) return;
         sendMessage();
@@ -2548,10 +2748,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // ─── 工具栏按钮 ───
     sendBtn.addEventListener('click', (e) => {
+      console.log('[OpenAIDE][DEBUG] sendBtn clicked, isStreaming:', isStreaming);
       e.preventDefault();
       e.stopPropagation();
       if (isStreaming) { cancelRequest(); } else { sendMessage(); }
     });
+    console.log('[OpenAIDE][DEBUG] sendBtn click listener attached');
 
     document.getElementById('model-selector').addEventListener('click', () => {
       vscode.postMessage({ type: 'selectModel' });
@@ -2654,16 +2856,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           // 显示工具轮次达到上限的提示和「继续」按钮
           const limitBanner = document.createElement('div');
           limitBanner.className = 'tool-limit-banner';
-          limitBanner.innerHTML = \`
-            <div class="tool-limit-message">
-              <span class="tool-limit-icon">⚠️</span>
-              <span>\${msg.message || '已达到最大工具调用轮数，是否继续？'}</span>
-            </div>
-            <div class="tool-limit-actions">
-              <button class="tool-limit-btn continue-btn" id="continueBtn">继续执行</button>
-              <button class="tool-limit-btn stop-btn" id="stopBtn">停止</button>
-            </div>
-          \`;
+          limitBanner.innerHTML = '<div class="tool-limit-message">' +
+              '<span class="tool-limit-icon">⚠️</span>' +
+              '<span>' + (msg.message || '已达到最大工具调用轮数，是否继续？') + '</span>' +
+            '</div>' +
+            '<div class="tool-limit-actions">' +
+              '<button class="tool-limit-btn continue-btn" id="continueBtn">继续执行</button>' +
+              '<button class="tool-limit-btn stop-btn" id="stopBtn">停止</button>' +
+            '</div>';
           // 找到当前最后一条 assistant 消息并追加
           const lastAssistant = messagesEl.querySelector('.message-bubble.assistant:last-of-type .message-content');
           if (lastAssistant) {
@@ -2683,6 +2883,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             setStreamingState(false);
           });
           // 滚动到底部
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+          break;
+        }
+
+        case 'toolApprovalRequest': {
+          // 在聊天流中显示工具审批请求
+          const approvalBanner = document.createElement('div');
+          approvalBanner.className = 'tool-approval-banner';
+          approvalBanner.id = 'approval-' + msg.toolCallId;
+          approvalBanner.innerHTML = '<div class="tool-approval-message">' +
+              '<span class="tool-approval-icon">🔐</span>' +
+              '<span>工具 <strong>' + msg.toolName + '</strong> 请求执行权限</span>' +
+            '</div>' +
+            (msg.description ? '<div class="tool-approval-desc">' + msg.description + '</div>' : '') +
+            '<div class="tool-approval-actions">' +
+              '<button class="tool-approval-btn approve-btn" data-action="approve">允许</button>' +
+              '<button class="tool-approval-btn always-btn" data-action="always">始终允许</button>' +
+              '<button class="tool-approval-btn deny-btn" data-action="deny">拒绝</button>' +
+            '</div>';
+          // 找到当前最后一条 assistant 消息并追加
+          const approvalTarget = messagesEl.querySelector('.message-bubble.assistant:last-of-type .message-content');
+          if (approvalTarget) {
+            approvalTarget.appendChild(approvalBanner);
+          } else {
+            messagesEl.appendChild(approvalBanner);
+          }
+          // 绑定按钮事件
+          const toolCallId = msg.toolCallId;
+          approvalBanner.querySelector('[data-action="approve"]').addEventListener('click', () => {
+            approvalBanner.classList.add('resolved');
+            approvalBanner.querySelector('.tool-approval-actions').innerHTML = '<span style="color:var(--vscode-charts-green)">✓ 已允许</span>';
+            vscode.postMessage({ type: 'approveToolCall', toolCallId });
+          });
+          approvalBanner.querySelector('[data-action="always"]').addEventListener('click', () => {
+            approvalBanner.classList.add('resolved');
+            approvalBanner.querySelector('.tool-approval-actions').innerHTML = '<span style="color:var(--vscode-charts-green)">✓ 已始终允许</span>';
+            vscode.postMessage({ type: 'alwaysApproveToolCall', toolCallId });
+          });
+          approvalBanner.querySelector('[data-action="deny"]').addEventListener('click', () => {
+            approvalBanner.classList.add('resolved');
+            approvalBanner.querySelector('.tool-approval-actions').innerHTML = '<span style="color:var(--vscode-charts-red)">✕ 已拒绝</span>';
+            vscode.postMessage({ type: 'denyToolCall', toolCallId });
+          });
           messagesEl.scrollTop = messagesEl.scrollHeight;
           break;
         }
@@ -2827,6 +3070,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // 通知 Extension Webview 已准备好接收消息
     console.log('[OpenAIDE] Webview JS initialized, sending webviewReady');
     vscode.postMessage({ type: 'webviewReady' });
+    console.log('[OpenAIDE][DEBUG] webviewReady sent, proceeding to changes panel logic...');
 
     // ─── 变更面板逻辑 ───
     const changesPanel = document.getElementById('changes-panel');
@@ -2842,6 +3086,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       vscode.postMessage({ type: 'rejectAllChanges' });
     });
 
+    // 折叠/展开逻辑
+    const changesHeader = document.getElementById('changes-header');
+    console.log('[OpenAIDE][DEBUG] changesHeader element:', changesHeader);
+    if (changesHeader) {
+      changesHeader.addEventListener('click', (e) => {
+        // 如果点击的是操作按钮，不触发折叠
+        if (e.target.closest('.changes-panel__actions')) return;
+        changesPanel.classList.toggle('collapsed');
+      });
+    } else {
+      console.warn('[OpenAIDE][WARN] changes-header element not found!');
+    }
+    console.log('[OpenAIDE][DEBUG] All event listeners attached successfully');
+
     function renderChangesPanel(changes) {
       currentChanges = changes;
       if (changes.length === 0) {
@@ -2853,14 +3111,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       changesCount.textContent = changes.length;
       changesList.innerHTML = '';
 
+      // 检测是否有同名文件，如果有则显示父目录以区分
+      var nameCount = {};
+      changes.forEach(function(c) {
+        nameCount[c.fileName] = (nameCount[c.fileName] || 0) + 1;
+      });
+
       changes.forEach(function(change) {
         var item = document.createElement('div');
         item.className = 'changes-file-item';
 
+        // 如果有同名文件，显示父目录/文件名 以区分
+        var displayName = change.fileName;
+        if (nameCount[change.fileName] > 1) {
+          var parts = change.path.replace(new RegExp('\\\\\\\\', 'g'), '/').split('/');
+          if (parts.length >= 2) {
+            displayName = parts[parts.length - 2] + '/' + change.fileName;
+          }
+        }
+
         var info = document.createElement('div');
         info.className = 'changes-file-item__info';
         info.innerHTML = '<span class="changes-file-item__icon">📄</span>' +
-          '<span class="changes-file-item__name" title="' + change.path + '">' + change.fileName + '</span>';
+          '<span class="changes-file-item__name" title="' + change.path + '">' + displayName + '</span>';
         info.addEventListener('click', function() {
           vscode.postMessage({ type: 'viewChangeDiff', path: change.path });
         });

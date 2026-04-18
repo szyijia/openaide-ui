@@ -41,6 +41,11 @@ print_banner() {
   echo -e "${CYAN}╠═══════════════════════════════════════════════════════╣${NC}"
   echo -e "${CYAN}║${NC}  引擎类型:  ${GREEN}TypeScript (ts-code)${NC}                    ${CYAN}║${NC}"
   echo -e "${CYAN}║${NC}  源码路径:  ${YELLOW}ts-code/${NC}                                 ${CYAN}║${NC}"
+  if [ -n "$DEBUG_FLAG" ]; then
+  echo -e "${CYAN}║${NC}  Debug:     ${GREEN}ON${NC} (日志 → ~/.openaide/debug/)           ${CYAN}║${NC}"
+  else
+  echo -e "${CYAN}║${NC}  Debug:     ${YELLOW}OFF${NC}                                       ${CYAN}║${NC}"
+  fi
   [ -n "$OPENAIDE_MODEL" ] && \
   echo -e "${CYAN}║${NC}  当前模型:  ${GREEN}$OPENAIDE_MODEL${NC}$(printf '%*s' $((30 - ${#OPENAIDE_MODEL})) '')${CYAN}║${NC}"
   echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
@@ -52,6 +57,8 @@ SKIP_BUILD=false
 BUILD_ONLY=false
 CORE_ONLY=false
 CHECK_ONLY=false
+NO_DEBUG=false
+DEBUG_FLAG="--debug"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -59,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --build-only)  BUILD_ONLY=true; shift ;;
     --core-only)   CORE_ONLY=true; shift ;;
     --check)       CHECK_ONLY=true; shift ;;
+    --no-debug)    NO_DEBUG=true; DEBUG_FLAG=""; shift ;;
     --model)       export OPENAIDE_MODEL="$2"; shift 2 ;;
     --help|-h)
       echo -e "${BOLD}openAIDE — ts-code 引擎开发脚本${NC}"
@@ -68,6 +76,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --build-only     仅构建，不启动 VSCode"
       echo "  --core-only      仅启动 ts-code Bridge（stdio 模式，独立调试）"
       echo "  --check          只检查环境状态"
+      echo "  --no-debug       禁用默认的 debug 模式"
       echo "  --model <name>   指定模型"
       echo "  --help, -h       显示帮助"
       echo ""
@@ -76,6 +85,7 @@ while [[ $# -gt 0 ]]; do
       echo "  ./scripts/dev-core.sh --core-only              # 独立调试 ts-code Bridge"
       echo "  ./scripts/dev-core.sh --skip-build             # 跳过编译直接启动"
       echo "  ./scripts/dev-core.sh --model deepseek-chat    # 指定模型"
+      echo "  ./scripts/dev-core.sh --no-debug               # 禁用 debug 日志"
       echo ""
       echo "其他引擎脚本:"
       echo "  ./scripts/dev-ts.sh         TS 引擎 (claude-code)"
@@ -148,19 +158,19 @@ if [ "$CORE_ONLY" = true ]; then
   # 方式 1: 编译后的 JS（优先）
   if [ -f "$TS_CODE_DIR/dist/bridge-server.js" ]; then
     info "使用编译后的 bridge-server.js..."
-    exec node "$TS_CODE_DIR/dist/bridge-server.js" --bridge
+    exec node "$TS_CODE_DIR/dist/bridge-server.js" --bridge $DEBUG_FLAG
   fi
 
   # 方式 2: tsx 直接运行 TypeScript 源码
   if command -v tsx &>/dev/null; then
     info "使用 tsx 运行 bridge-server（开发模式）..."
-    exec tsx "$TS_CODE_DIR/src/bridge-server.ts" --bridge
+    exec tsx "$TS_CODE_DIR/src/bridge-server.ts" --bridge $DEBUG_FLAG
   fi
 
   # 方式 3: npx tsx
   if npx --no-install tsx --version &>/dev/null 2>&1; then
     info "使用 npx tsx 运行 bridge-server..."
-    exec npx tsx "$TS_CODE_DIR/src/bridge-server.ts" --bridge
+    exec npx tsx "$TS_CODE_DIR/src/bridge-server.ts" --bridge $DEBUG_FLAG
   fi
 
   error "未找到可用的运行方式。请先编译 ts-code (pnpm build)，或安装 tsx: pnpm add -g tsx"
@@ -174,6 +184,15 @@ info "生成 ts-code Bridge wrapper: dist/bridge-server.bundle.cjs"
 mkdir -p "$DIST_DIR"
 
 # 优先使用编译后的 JS，回退到 tsx
+# 计算 debug 参数数组（用于 wrapper spawn）
+DEBUG_ARGS=""
+if [ -n "$DEBUG_FLAG" ]; then
+  DEBUG_ARGS=", '--debug'"
+  info "  → debug 模式: 已启用（日志输出到 ~/.openaide/debug/）"
+else
+  info "  → debug 模式: 已禁用"
+fi
+
 if [ -f "$TS_CODE_DIR/dist/bridge-server.js" ]; then
   TS_CODE_ENTRY="$TS_CODE_DIR/dist/bridge-server.js"
   info "  → 委托到: ts-code/dist/bridge-server.js (编译产物)"
@@ -184,7 +203,7 @@ if [ -f "$TS_CODE_DIR/dist/bridge-server.js" ]; then
 const { spawn } = require('child_process');
 const child = spawn(
   process.execPath,
-  ['${TS_CODE_ENTRY}', '--bridge'],
+  ['${TS_CODE_ENTRY}', '--bridge'${DEBUG_ARGS}],
   { stdio: 'inherit', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
 );
 child.on('exit', (code) => process.exit(code || 0));
@@ -200,7 +219,7 @@ else
 const { spawn } = require('child_process');
 const child = spawn(
   '${TSX_BIN}',
-  ['${TS_CODE_DIR}/src/bridge-server.ts', '--bridge'],
+  ['${TS_CODE_DIR}/src/bridge-server.ts', '--bridge'${DEBUG_ARGS}],
   { stdio: 'inherit', env: { ...process.env } }
 );
 child.on('exit', (code) => process.exit(code || 0));

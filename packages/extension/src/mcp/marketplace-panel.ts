@@ -60,7 +60,8 @@ export class MCPMarketplacePanel implements vscode.Disposable {
   private async initMarketplace(): Promise<void> {
     try {
       // 使用变量间接引用，避免 esbuild 静态解析（运行时动态加载）
-      const modulePath = ['..', '..', '..', '..', 'ts-code', 'src', 'mcp', 'marketplace.js'].join('/');
+      // 注意：指向 ts-code 的编译产物目录 dist/，而非源码目录 src/
+      const modulePath = ['..', '..', '..', '..', 'ts-code', 'dist', 'mcp', 'marketplace.js'].join('/');
       const mod = await import(modulePath);
       this.marketplace = new mod.MCPMarketplace() as unknown as MCPMarketplaceService;
     } catch (err) {

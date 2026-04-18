@@ -300,8 +300,10 @@ export class AgentBridge extends EventEmitter {
    */
   async chatSend(params: ChatSendParams): Promise<void> {
     // 使用较长的超时（5 分钟），因为 AI 对话可能需要较长时间
+    this.log(`chatSend called, process: ${!!this.process}, connected: ${this._isConnected}`);
     return new Promise((resolve, reject) => {
       if (!this.process || !this._isConnected) {
+        this.log(`chatSend rejected: process=${!!this.process}, connected=${this._isConnected}`);
         reject(new Error('Agent Core 未连接'));
         return;
       }
@@ -534,6 +536,10 @@ export class AgentBridge extends EventEmitter {
    * 分发通知到对应的事件
    */
   private dispatchNotification(method: string, params: unknown): void {
+    // 非高频通知记录日志
+    if (method !== Methods.CHAT_TEXT && method !== Methods.CHAT_THINKING) {
+      this.log(`[dispatchNotification] 收到通知: ${method}`);
+    }
     switch (method) {
       case Methods.CHAT_TEXT:
         this.emit('chat:text', params as ChatTextNotification);
@@ -569,6 +575,7 @@ export class AgentBridge extends EventEmitter {
         this.emit('completion:result', params as CompletionResultNotification);
         break;
       case Methods.TOOL_APPROVAL_REQUEST:
+        this.log(`[dispatchNotification] 收到工具审批请求: ${JSON.stringify(params)}`);
         this.emit('tool:approvalRequest', params as ToolApprovalRequestNotification);
         break;
       default:

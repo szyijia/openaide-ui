@@ -16,8 +16,6 @@ import { ChatViewProvider } from './chat/chat-view-provider.js';
 import { InlineDiffManager } from './diff/inline-diff-manager.js';
 import { MultiFileDiffPanel } from './diff/multi-file-diff-panel.js';
 import { OpenAIDECompletionProvider } from './completion/completion-provider.js';
-import { MCPPanel } from './mcp/mcp-panel.js';
-import { MemoryPanel } from './memory/memory-panel.js';
 import { UpdateManager } from './updater/update-manager.js';
 import { MCPMarketplacePanel } from './mcp/marketplace-panel.js';
 import { SettingsPanel } from './chat/settings-panel.js';
@@ -29,8 +27,6 @@ let chatProvider: ChatViewProvider;
 let diffManager: InlineDiffManager;
 let multiFileDiffPanel: MultiFileDiffPanel;
 let completionProvider: OpenAIDECompletionProvider;
-let mcpPanel: MCPPanel;
-let memoryPanel: MemoryPanel;
 let updateManager: UpdateManager;
 let mcpMarketplacePanel: MCPMarketplacePanel;
 let statusBarItem: vscode.StatusBarItem;
@@ -60,11 +56,7 @@ export async function activate(context: vscode.ExtensionContext) {
   diffManager = new InlineDiffManager();
   multiFileDiffPanel = new MultiFileDiffPanel(diffManager);
 
-  // ─── 3.5 初始化 MCP 面板和记忆面板 ───
-  mcpPanel = new MCPPanel(bridge);
-  memoryPanel = new MemoryPanel(bridge);
-
-  // 监听 Bridge 的文件编辑事件
+  // ─── 3.5 监听 Bridge 的文件编辑事件 ───
   bridge.on('file:edit', async (data: FileEditNotification) => {
     await diffManager.showDiff({
       path: data.path,
@@ -129,31 +121,35 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // 监听工具审批请求
   bridge.on('tool:approvalRequest', async (data: ToolApprovalRequestNotification) => {
+    console.log(`[OpenAIDE] 收到工具审批请求: tool=${data.toolName}, id=${data.toolCallId}`);
+
     // 如果该工具已被"始终允许"，直接批准，不弹窗
     if (getApprovedTools().includes(data.toolName)) {
+      console.log(`[OpenAIDE] 工具 "${data.toolName}" 已在始终允许列表中，自动批准`);
       await bridge.toolApprove({ toolCallId: data.toolCallId });
       return;
     }
 
-    const action = await vscode.window.showWarningMessage(
-      `🔧 工具 "${data.toolName}" 请求执行权限`,
-      { modal: false, detail: data.description },
-      '✅ 允许',
-      '❌ 拒绝',
-      '✅ 始终允许',
+    // 通过 webview 聊天面板内嵌审批 UI（非弹窗方式）
+    console.log(`[OpenAIDE] 工具 "${data.toolName}" 需要用户审批，在聊天面板中显示…`);
+    const action = await chatProvider.showToolApproval(
+      data.toolCallId,
+      data.toolName,
+      data.description || '',
     );
 
+    console.log(`[OpenAIDE] 用户审批结果: tool=${data.toolName}, action=${action}`);
+
     switch (action) {
-      case '✅ 允许':
-        await bridge.toolApprove({ toolCallId: data.toolCallId });
+      case 'approve':
+        // bridge.toolApprove 已在 chatProvider 中调用
         break;
-      case '✅ 始终允许':
+      case 'always':
         await addApprovedTool(data.toolName);
-        await bridge.toolApprove({ toolCallId: data.toolCallId });
+        // bridge.toolApprove 已在 chatProvider 中调用
         break;
-      case '❌ 拒绝':
-      default:
-        await bridge.toolDeny({ toolCallId: data.toolCallId, reason: '用户拒绝' });
+      case 'deny':
+        // bridge.toolDeny 已在 chatProvider 中调用
         break;
     }
   });
@@ -673,8 +669,6 @@ export async function activate(context: vscode.ExtensionContext) {
     saveDisposable,
     diagnosticDisposable,
     { dispose: () => bridge.dispose() },
-    { dispose: () => mcpPanel.dispose() },
-    { dispose: () => memoryPanel.dispose() },
     { dispose: () => multiFileDiffPanel.dispose() },
     { dispose: () => diffManager.dispose() },
     { dispose: () => completionProvider.dispose() },
