@@ -389,12 +389,24 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('openaide.openSettings');
         return;
       }
-      // 检查选中的模型是否已配置 key
+      // 检查选中的模型是否已配置 key（ollama 无需 key；custom 需要 custom.apiKey）
       const providerName = picked.description?.split('/')[0] || '';
-      const keyConfig = providerKeyMap[providerName];
-      if (keyConfig && !config.get<string>(keyConfig, '')) {
+      let missingKey = false;
+      let missingKeyLabel = providerName;
+      if (providerName === 'custom') {
+        if (!customApiKey) {
+          missingKey = true;
+          missingKeyLabel = '自定义模型';
+        }
+      } else {
+        const keyConfig = providerKeyMap[providerName];
+        if (keyConfig && !config.get<string>(keyConfig, '')) {
+          missingKey = true;
+        }
+      }
+      if (missingKey) {
         const action = await vscode.window.showWarningMessage(
-          `${providerName} 的 API Key 尚未配置，请先在设置中配置。`,
+          `${missingKeyLabel} 的 API Key 尚未配置，请先在设置中配置。未配置前不会切换模型。`,
           '前往设置',
         );
         if (action === '前往设置') {
@@ -402,7 +414,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         return;
       }
-      // 持久化模型选择到 VSCode 配置
+      // 持久化模型选择到 VSCode 配置（仅在 Key 校验通过后才写入，避免留下无法使用的残留配置）
       await config.update('model', picked.description, vscode.ConfigurationTarget.Global);
       const modelName = picked.label.replace(/\$\([^)]+\)\s*/g, '').trim();
       updateStatusBar(modelName);
@@ -563,6 +575,8 @@ export async function activate(context: vscode.ExtensionContext) {
       if (SettingsPanel.currentPanel) {
         // 设置面板会自行处理刷新（通过 loadModelConfigs）
       }
+      // 同步 API Key 配置状态到聊天 Webview（用于底部"未配置"提示条显示/隐藏）
+      chatProvider?.postApiKeyStatus();
     }
   });
 
@@ -806,8 +820,8 @@ function getInitialModelDisplayName(): string {
     }
   }
 
-  // 默认回退
-  return 'Claude Sonnet 4';
+  // 没有任何已配置 Key 时，不再臆测模型名，提示用户去配置
+  return '未配置模型';
 }
 
 /**

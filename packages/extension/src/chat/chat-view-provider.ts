@@ -302,6 +302,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'webviewReady':
         console.log('[OpenAIDE] Webview is ready, sending initial model name');
         this.sendInitialModelName();
+        // 同步 API Key 配置状态，以便 webview 显示"未配置"提示条
+        this.postApiKeyStatus();
         // 如果有待处理的变更，同步到 Webview
         if (this.pendingChanges.length > 0) {
           this.postToWebview({ type: 'pendingChanges', changes: this.pendingChanges });
@@ -325,6 +327,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       'custom.apiKey',
     ];
     return keys.some(k => !!config.get<string>(k, ''));
+  }
+
+  /**
+   * 将当前 API Key 配置状态推送到 Webview
+   * 供 webview 显示 / 隐藏底部"未配置 API Key"提示条
+   */
+  public postApiKeyStatus(): void {
+    this.postToWebview({
+      type: 'apiKeyStatus',
+      configured: this.hasAnyApiKeyConfigured(),
+    });
   }
 
   /**
@@ -704,73 +717,98 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * 初始化时读取当前配置的模型名称并发送给 Webview
+   *
+   * 显示策略：
+   * 1. 如果 openaide.model 有值，且其对应 provider 的 Key 已配置，则显示该模型名；
+   * 2. 否则，寻找第一个已配置 Key 的 provider，显示该 provider 的默认模型名；
+   * 3. 如果没有任何 provider 配置了 Key，显示 "未配置模型"（与底部 Key 未配置黄条提示对齐）。
    */
   private sendInitialModelName(): void {
     const config = vscode.workspace.getConfiguration('openaide');
+
+    // provider -> 对应的 configKey（ollama 无需 Key；custom 使用 custom.apiKey）
+    const providerConfigKey: Record<string, string | null> = {
+      anthropic: 'anthropicApiKey',
+      openai: 'openaiApiKey',
+      deepseek: 'deepseekApiKey',
+      qwen: 'qwenApiKey',
+      glm: 'glmApiKey',
+      ollama: null, // Ollama 本地无需 Key
+      custom: 'custom.apiKey',
+    };
+
+    const hasKeyForProvider = (provider: string): boolean => {
+      const key = providerConfigKey[provider];
+      if (key === undefined) return false;
+      if (key === null) return true; // ollama
+      return !!config.get<string>(key, '');
+    };
+
+    // modelMap 同时支持带 provider/ 前缀和不带前缀的格式
+    const modelMap: Record<string, string> = {
+      'anthropic/claude-sonnet-4-20250514': 'Claude Sonnet 4',
+      'claude-sonnet-4-20250514': 'Claude Sonnet 4',
+      'anthropic/claude-opus-4-20250514': 'Claude Opus 4',
+      'claude-opus-4-20250514': 'Claude Opus 4',
+      'openai/gpt-4o': 'GPT-4o',
+      'gpt-4o': 'GPT-4o',
+      'openai/gpt-4o-mini': 'GPT-4o Mini',
+      'gpt-4o-mini': 'GPT-4o Mini',
+      'deepseek/deepseek-chat': 'DeepSeek V3',
+      'deepseek-chat': 'DeepSeek V3',
+      'deepseek/deepseek-reasoner': 'DeepSeek Reasoner',
+      'deepseek-reasoner': 'DeepSeek Reasoner',
+      'qwen/qwen-max': 'Qwen Max',
+      'qwen-max': 'Qwen Max',
+      'qwen/qwen-plus': 'Qwen Plus',
+      'qwen-plus': 'Qwen Plus',
+      'glm/glm-5.1': 'GLM 5.1',
+      'glm-5.1': 'GLM 5.1',
+      'glm/glm-4-flash': 'GLM-4-Flash',
+      'glm-4-flash': 'GLM-4-Flash',
+      'ollama/qwen2.5-coder': 'Ollama 本地',
+      'qwen2.5-coder': 'Ollama 本地',
+    };
+
+    // 1) 已显式选择模型，且对应 provider Key 已配置 —— 直接显示
     const model = config.get<string>('model', '');
     if (model) {
-      // modelMap 同时支持带 provider/ 前缀和不带前缀的格式
-      const modelMap: Record<string, string> = {
-        'anthropic/claude-sonnet-4-20250514': 'Claude Sonnet 4',
-        'claude-sonnet-4-20250514': 'Claude Sonnet 4',
-        'anthropic/claude-opus-4-20250514': 'Claude Opus 4',
-        'claude-opus-4-20250514': 'Claude Opus 4',
-        'openai/gpt-4o': 'GPT-4o',
-        'gpt-4o': 'GPT-4o',
-        'openai/gpt-4o-mini': 'GPT-4o Mini',
-        'gpt-4o-mini': 'GPT-4o Mini',
-        'deepseek/deepseek-chat': 'DeepSeek V3',
-        'deepseek-chat': 'DeepSeek V3',
-        'deepseek/deepseek-reasoner': 'DeepSeek Reasoner',
-        'deepseek-reasoner': 'DeepSeek Reasoner',
-        'qwen/qwen-max': 'Qwen Max',
-        'qwen-max': 'Qwen Max',
-        'qwen/qwen-plus': 'Qwen Plus',
-        'qwen-plus': 'Qwen Plus',
-        'glm/glm-5.1': 'GLM 5.1',
-        'glm-5.1': 'GLM 5.1',
-        'glm/glm-4-flash': 'GLM-4-Flash',
-        'glm-4-flash': 'GLM-4-Flash',
-        'ollama/qwen2.5-coder': 'Ollama 本地',
-        'qwen2.5-coder': 'Ollama 本地',
-      };
-      const displayName = modelMap[model] || model.split('/').pop() || model;
-      this.postToWebview({ type: 'updateModelName', name: displayName });
-    } else {
-      // 检查哪个 provider 已配置了 API Key，优先展示该 provider 的模型
-      const providerKeyMap: { provider: string; configKey: string; displayName: string }[] = [
-        { provider: 'anthropic', configKey: 'anthropicApiKey', displayName: 'Claude Sonnet 4' },
-        { provider: 'openai', configKey: 'openaiApiKey', displayName: 'GPT-4o' },
-        { provider: 'deepseek', configKey: 'deepseekApiKey', displayName: 'DeepSeek V3' },
-        { provider: 'qwen', configKey: 'qwenApiKey', displayName: 'Qwen Max' },
-        { provider: 'glm', configKey: 'glmApiKey', displayName: 'GLM 5.1' },
-      ];
-
-      // 优先使用已配置 API Key 的 provider
-      let resolvedName = '';
-      for (const entry of providerKeyMap) {
-        if (config.get<string>(entry.configKey, '')) {
-          resolvedName = entry.displayName;
-          break;
-        }
+      const modelProvider = model.includes('/') ? model.split('/')[0] : '';
+      // 无 provider 前缀时做模糊匹配（老配置兼容）
+      const guessedProvider = modelProvider || (
+        model.startsWith('claude') ? 'anthropic' :
+          model.startsWith('gpt') ? 'openai' :
+            model.startsWith('deepseek') ? 'deepseek' :
+              model.startsWith('qwen') ? 'qwen' :
+                model.startsWith('glm') ? 'glm' :
+                  ''
+      );
+      if (guessedProvider && hasKeyForProvider(guessedProvider)) {
+        const displayName = modelMap[model] || model.split('/').pop() || model;
+        this.postToWebview({ type: 'updateModelName', name: displayName });
+        return;
       }
-
-      // 如果没有任何 provider 配置了 Key，回退到 provider 配置或默认值
-      if (!resolvedName) {
-        const provider = config.get<string>('provider', 'anthropic');
-        const defaultNames: Record<string, string> = {
-          anthropic: 'Claude Sonnet 4',
-          openai: 'GPT-4o',
-          deepseek: 'DeepSeek V3',
-          qwen: 'Qwen Max',
-          glm: 'GLM 5.1',
-          ollama: 'Ollama 本地',
-        };
-        resolvedName = defaultNames[provider] || 'Claude Sonnet 4';
-      }
-
-      this.postToWebview({ type: 'updateModelName', name: resolvedName });
+      // 否则：model 有残留但 Key 丢失，跳到 2)
     }
+
+    // 2) 回退到第一个已配置 Key 的 provider 的默认模型
+    const providerFallbackOrder: { provider: string; displayName: string }[] = [
+      { provider: 'anthropic', displayName: 'Claude Sonnet 4' },
+      { provider: 'openai', displayName: 'GPT-4o' },
+      { provider: 'deepseek', displayName: 'DeepSeek V3' },
+      { provider: 'qwen', displayName: 'Qwen Max' },
+      { provider: 'glm', displayName: 'GLM 5.1' },
+      { provider: 'custom', displayName: config.get<string>('custom.model', '') || '自定义模型' },
+    ];
+    for (const entry of providerFallbackOrder) {
+      if (hasKeyForProvider(entry.provider)) {
+        this.postToWebview({ type: 'updateModelName', name: entry.displayName });
+        return;
+      }
+    }
+
+    // 3) 完全未配置任何 Key —— 明确提示用户
+    this.postToWebview({ type: 'updateModelName', name: '未配置模型' });
   }
 
   /**
@@ -1653,6 +1691,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       height: 14px;
     }
 
+    /* @引用内容按钮文字样式 */
+    .btn-sm .at-file-text {
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    /* 未配置 API Key 提示条 */
+    .api-key-hint {
+      font-size: 11px;
+      color: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground, #cca700));
+      display: inline-flex;
+      align-items: center;
+    }
+    .api-key-hint a {
+      color: var(--vscode-textLink-foreground);
+      margin-left: 2px;
+      text-decoration: none;
+    }
+    .api-key-hint a:hover {
+      text-decoration: underline;
+    }
+
     /* ─── model-label（CodeBuddy 模型标签） ─── */
     .model-label {
       align-items: center;
@@ -2184,9 +2245,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             ></textarea>
             <div class="addition-wrapper">
               <div class="addition-btns">
-                <button class="btn-sm" id="btn-at-file" title="引用文件 (@)">
-                  <svg viewBox="0 0 16 16" fill="currentColor"><path d="M12.5 8a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0zM8 12.5a4.5 4.5 0 0 0 3.536-1.721l1.857 1.857a.5.5 0 0 0 .707-.707l-1.857-1.857A4.5 4.5 0 1 0 8 12.5z"/></svg>
-                  <span>@</span>
+                <button class="btn-sm btn-at-file" id="btn-at-file" title="引用内容 (@)">
+                  <span class="at-file-text">@引用内容</span>
                 </button>
                 <div class="model-label" id="model-selector" title="选择模型">
                   <span class="model-simple-name" id="model-name">默认模型</span>
@@ -2207,6 +2267,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <!-- 底部操作栏（CodeBuddy bottom-wrapper 风格） -->
           <div class="bottom-wrapper">
             <span style="font-size:11px;color:var(--gongfeng-chat-text-secondary-foreground)">Enter 发送 · Shift+Enter 换行</span>
+            <span class="api-key-hint" id="api-key-hint" style="display:none">
+              <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11" style="vertical-align:-1px;margin-right:3px"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM7.5 4h1v5h-1V4zm0 6.5h1v1h-1v-1z"/></svg>
+              尚未配置大模型 API Key，<a href="#" id="api-key-hint-link">前往设置</a>
+            </span>
           </div>
         </div>
       </div>
@@ -2700,6 +2764,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let mentionSelectedIdx = 0;
     let mentionItems = [];
 
+    // 未配置 API Key 提示条 — 点击跳转设置
+    (function bindApiKeyHintLink() {
+      const link = document.getElementById('api-key-hint-link');
+      if (link) {
+        link.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          vscode.postMessage({ type: 'openSettings' });
+        });
+      }
+    })();
+
     // @ 按钮点击
     document.getElementById('btn-at-file').addEventListener('click', () => {
       const pos = inputEl.selectionStart || inputEl.value.length;
@@ -2963,6 +3038,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'updateModelName':
           document.getElementById('model-name').textContent = msg.name || '默认模型';
           break;
+
+        case 'apiKeyStatus': {
+          const hintEl = document.getElementById('api-key-hint');
+          if (hintEl) {
+            hintEl.style.display = msg.configured ? 'none' : 'inline-flex';
+          }
+          break;
+        }
 
         case 'pendingChanges':
           renderChangesPanel(msg.changes || []);

@@ -269,8 +269,8 @@
         },
         "openaide.model": {
           "type": "string",
-          "default": "claude-sonnet-4-20250514",
-          "description": "默认模型"
+          "default": "",
+          "description": "默认模型（留空表示未选择，会根据已配置的 API Key 自动推断显示名）"
         },
         "openaide.apiKey": {
           "type": "string",
