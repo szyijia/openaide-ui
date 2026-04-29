@@ -24,7 +24,12 @@ set -euo pipefail
 
 # GitHub Token — 用于避免 GitHub API 限流 (403)
 # 构建过程中需要从 GitHub 下载扩展，未认证请求限额仅 60 次/小时
-export GITHUB_TOKEN="${GITHUB_TOKEN:-REDACTED-GITHUB-TOKEN}"
+# 请通过环境变量传入，不要在脚本里硬编码：
+#   export GITHUB_TOKEN=ghp_xxxxx && ./build.sh
+export GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+if [ -z "${GITHUB_TOKEN}" ]; then
+  echo "[warn] GITHUB_TOKEN is empty — GitHub API rate limit (60/hr) may be hit during build" >&2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
