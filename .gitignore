@@ -86,3 +86,8 @@ build/vscodium/dev/
 *.pid
 *.seed
 *.pid.lock
+scripts/
+# Large binary release artifacts
+docs/OpenAIDE-*.zip
+docs/*.dmg
+docs/*.exe

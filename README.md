@@ -1,6 +1,6 @@
 # OpenAIDE
 
-> OpenAIDE —— 基于 VSCodium 的 AI 原生 IDE 
+> OpenAIDE —— 基于 VSCodium 的 AI 原生 IDE
 
 **OpenAIDE** 是一款基于 VSCodium 深度定制的 AI 编程 IDE，将 LLM Agent 能力原生融入编辑器，提供代码生成、智能重构、多文件编辑、上下文管理等一站式 AI 编程体验。
 
@@ -13,15 +13,15 @@
 
 ## 📚 相关文档
 
-| 文档 | 说明 |
-|------|------|
-| [docs/architecture.md](docs/architecture.md) | 架构设计文档 |
-| [docs/bridge-protocol-spec.md](docs/bridge-protocol-spec.md) | Bridge 协议规范 |
-| [docs/core-migration-plan.md](docs/core-migration-plan.md) | Core 迁移计划 |
-| [docs/core-legal-risk-analysis.md](docs/core-legal-risk-analysis.md) | Core 法律风险分析 |
-| [docs/core-go-refactor-feasibility.md](docs/core-go-refactor-feasibility.md) | Go 重构可行性分析 |
+| 文档                                                                                             | 说明                 |
+| ------------------------------------------------------------------------------------------------ | -------------------- |
+| [docs/architecture.md](docs/architecture.md)                                                     | 架构设计文档         |
+| [docs/bridge-protocol-spec.md](docs/bridge-protocol-spec.md)                                     | Bridge 协议规范      |
+| [docs/core-migration-plan.md](docs/core-migration-plan.md)                                       | Core 迁移计划        |
+| [docs/core-legal-risk-analysis.md](docs/core-legal-risk-analysis.md)                             | Core 法律风险分析    |
+| [docs/core-go-refactor-feasibility.md](docs/core-go-refactor-feasibility.md)                     | Go 重构可行性分析    |
 | [docs/webview-template-string-escape-pitfall.md](docs/webview-template-string-escape-pitfall.md) | WebView 模板转义陷阱 |
-| [scripts/ICONS.md](scripts/ICONS.md) | 图标生成说明 |
+| [scripts/ICONS.md](scripts/ICONS.md)                                                             | 图标生成说明         |
 
 ## ✨ 核心特性
 
@@ -96,6 +96,7 @@ openaide-ui/
 │   ├── cli.sh                    # 终端交互式 Agent 对话
 │   ├── cli-cc.sh                 # Claude Code CLI 模式
 │   ├── build-desktop.sh          # 桌面版构建
+│   ├── package-dmg.sh            # macOS DMG 打包（arm64/x64）
 │   └── generate-icons.sh         # 图标生成脚本
 ├── packages/
 │   ├── extension/                # 🖥️ VS Code Extension
@@ -180,59 +181,17 @@ pnpm lint
 pnpm format
 ```
 
-### 开发脚本
-
-项目提供了多个开发脚本，位于 `scripts/` 目录下：
-
-| 脚本 | 说明 | 用法 |
-|------|------|------|
-| `scripts/dev.sh` | 完整开发环境启动 | `./scripts/dev.sh` |
-| `scripts/dev-core.sh` | Agent Core 开发模式 | `./scripts/dev-core.sh` |
-| `scripts/dev-ts.sh` | **TS 引擎 (claude-code) 开发** | `./scripts/dev-ts.sh` |
-| `scripts/dev-rust.sh` | Rust 引擎 (claw-code) 开发 | `./scripts/dev-rust.sh` |
-| `scripts/run-core.sh` | Agent Core 运行入口 | `./scripts/run-core.sh` |
-| `scripts/cli.sh` | 终端交互式 Agent 对话 | `./scripts/cli.sh --model deepseek-chat` |
-| `scripts/cli-cc.sh` | Claude Code CLI 模式 | `./scripts/cli-cc.sh` |
-| `scripts/build-desktop.sh` | 桌面版构建 | `./scripts/build-desktop.sh` |
-| `scripts/generate-icons.sh` | 图标生成 | `./scripts/generate-icons.sh` |
-
-#### TS 引擎开发（dev-ts.sh）
-
-将 claude-code 作为 TS 引擎后端，通过 JSON-RPC 2.0 协议接入 openaide-ui：
-
-```bash
-# 完整构建 + 启动 VSCode（TS 引擎）
-./scripts/dev-ts.sh
-
-# 独立调试模式（stdin/stdout 交互，不启动 VSCode）
-./scripts/dev-ts.sh --core-only
-
-# 指定模型（如 DeepSeek）
-DEEPSEEK_API_KEY=sk-xxx ./scripts/dev-ts.sh --core-only --model deepseek-chat
-
-# 跳过构建，直接启动
-./scripts/dev-ts.sh --skip-build
-
-# 只检查环境状态
-./scripts/dev-ts.sh --check
-
-# 查看完整帮助
-./scripts/dev-ts.sh --help
-```
-
-> 详细的 Bridge Adapter 说明请参考 [claude-code/BRIDGE.md](../claude-code/BRIDGE.md)
-
 ## 🤖 支持的模型
 
-| Provider | 默认模型 | 说明 |
-|----------|----------|------|
-| Anthropic | claude-sonnet-4-20250514 | 默认 Provider |
-| OpenAI | gpt-4o 等 | |
-| DeepSeek | deepseek-chat 等 | |
-| Qwen | 通义千问 | DashScope API |
-| GLM | 智谱 GLM | |
-| Ollama | 本地模型 | 本地部署 |
-| Custom | 自定义 | OpenAI 兼容的任意端点（可自定义 baseUrl + model） |
+| Provider  | 默认模型                 | 说明                                              |
+| --------- | ------------------------ | ------------------------------------------------- |
+| Anthropic | claude-sonnet-4-20250514 | 默认 Provider                                     |
+| OpenAI    | gpt-4o 等                |                                                   |
+| DeepSeek  | deepseek-chat 等         |                                                   |
+| Qwen      | 通义千问                 | DashScope API                                     |
+| GLM       | 智谱 GLM                 |                                                   |
+| Ollama    | 本地模型                 | 本地部署                                          |
+| Custom    | 自定义                   | OpenAI 兼容的任意端点（可自定义 baseUrl + model） |
 
 ## 📄 License
 
